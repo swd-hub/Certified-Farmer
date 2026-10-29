@@ -1,2 +1,1 @@
-# Certified-Farmer
-認定農業者制度
+https://github.com/swd-hub/Certified-Farmer
