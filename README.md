@@ -1,1 +1,1 @@
-https://github.com/swd-hub/Certified-Farmer/
+https://swd-hub.github.io/Certified-Farmer/
