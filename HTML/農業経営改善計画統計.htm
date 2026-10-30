@@ -1097,6 +1097,9 @@ async function loadAliasFile(file) {
 // 別名を適用した作目名（別名表を引数で受け取る）
 const resolveCropWith = (al, crop) => al[norm(crop)] || crop;
 
+// 抽出結果の表に表示する作目名（別名を適用した名前）
+const displayCrop = (r, al) => resolveCropWith(al, r.crop);
+
 // kg 系の単価を「円/kg」に換算（単価が無い・換算できない単位なら null）
 function pricePerKg(r) {
   if (r.price == null || !(r.price > 0)) return null;
@@ -1261,22 +1264,25 @@ function bindSortHeaders(table, st, rerender, infoId) {
 }
 
 // 抽出結果の列ごとの並べ替えキー（x = {r: レコード, i: 元の位置}）
-const rawGetters = okSet => [
-  x => okSet.has(x.r) ? 0 : 1,      // 除外（条件）：対象が先
-  x => x.r.exclude ? 1 : 0,         // 手動除外
-  x => x.r.kind,
-  x => x.r.name,
-  x => x.r.meta.date || '',
-  x => x.r.file,
-  x => x.r.sheet,
-  x => x.r.crop,
-  x => x.r.area,
-  x => x.r.areaUnit,
-  x => x.r.yld,
-  x => x.r.yldUnit,
-  x => x.r.price,
-  x => x.r.priceUnit
-];
+const rawGetters = okSet => {
+  const al = parseAlias();
+  return [
+    x => okSet.has(x.r) ? 0 : 1,      // 除外（条件）：対象が先
+    x => x.r.exclude ? 1 : 0,         // 手動除外
+    x => x.r.kind,
+    x => x.r.name,
+    x => x.r.meta.date || '',
+    x => x.r.file,
+    x => x.r.sheet,
+    x => displayCrop(x.r, al),        // 作目：別名適用後の名前で並べ替え
+    x => x.r.area,
+    x => x.r.areaUnit,
+    x => x.r.yld,
+    x => x.r.yldUnit,
+    x => x.r.price,
+    x => x.r.priceUnit
+  ];
+};
 
 // 集計結果の列ごとの並べ替えキー
 const sumGetters = [
@@ -1329,7 +1335,7 @@ function calc() {
   const pass = records.filter(r => !r.exclude && okSet.has(r));
   const dedupeRemoved = f.dedupe ? candidates - okSet.size : 0;
 
-  // 除外の列で並べ替え中は表全体を再描画、それ以外は✓の更新のみ
+  // 除外の列で並べ替え中は表全体を再描画、それ以外は✓と作目名の更新のみ
   if (rawSort.col === 0 || rawSort.col === 1) renderRaw();
   else refreshRawFlags(okSet);
   refreshCropChips();
@@ -1430,6 +1436,7 @@ function calc() {
 /* ===== 抽出結果の表示 ===== */
 function renderRaw() {
   const okSet = conditionSet(getFilters());
+  const al = parseAlias();
   const items = records.map((r, i) => ({r, i}));
   const sorted = sortRows(items, rawGetters(okSet), rawSort);
   $('raw').innerHTML = sorted.map(({r, i}) => {
@@ -1442,7 +1449,7 @@ function renderRaw() {
     <td class="l">${esc(r.meta.date || '（不明）')}</td>
     <td class="l">${esc(r.file)}</td>
     <td class="l">${esc(r.sheet)}</td>
-    <td class="l"><input class="name" style="width:110px" data-i="${i}" data-k="crop" value="${esc(r.crop)}" title="ダブルクリックで別名欄に取り込み"></td>
+    <td class="l"><input class="name" style="width:110px" data-i="${i}" data-k="crop" data-raw="${esc(r.crop)}" value="${esc(displayCrop(r, al))}" title="元の作目: ${esc(r.crop)}（ダブルクリックで別名欄に取り込み）"></td>
     <td><input data-i="${i}" data-k="area" value="${r.area ?? ''}"></td>
     <td><input style="width:50px" data-i="${i}" data-k="areaUnit" value="${esc(r.areaUnit)}"></td>
     <td><input data-i="${i}" data-k="yld" value="${r.yld ?? ''}"></td>
@@ -1453,14 +1460,21 @@ function renderRaw() {
   }).join('');
 }
 
-// 抽出結果の ✓ と行の薄表示を、表を再描画せずに更新（行は元の位置で対応づけ）
+// 抽出結果の ✓・行の薄表示・作目名を、表を再描画せずに更新（行は元の位置で対応づけ）
 function refreshRawFlags(okSet) {
+  const al = parseAlias();
   document.querySelectorAll('#raw tr').forEach(tr => {
     const r = records[+tr.dataset.row];
     if (!r) return;
     const out = !okSet.has(r);
     tr.style.opacity = out ? '0.5' : '';
     tr.firstElementChild.textContent = out ? '✓' : '';
+    const crop = tr.querySelector('input[data-k="crop"]');
+    if (crop) {
+      crop.value = displayCrop(r, al);
+      crop.dataset.raw = r.crop;
+      crop.title = `元の作目: ${r.crop}（ダブルクリックで別名欄に取り込み）`;
+    }
   });
 }
 
@@ -1507,6 +1521,7 @@ async function runPending(onlyPending) {
 function saveRecordsCsv() {
   if (!records.length) return log('先にExcelを抽出してください', 'warn');
   const okSet = conditionSet(getFilters());
+  const al = parseAlias();
   const q = s => `"${String(s ?? '').replace(/"/g, '""')}"`;
   const head = ['条件対象', '手動対象', '区分', '個人・法人名', '申請日', 'ファイル', 'シート', '作目', '作付面積', '面積単位', '単収', '単収単位', '単価', '単価単位'];
   const lines = [head.join(',')];
@@ -1516,7 +1531,7 @@ function saveRecordsCsv() {
     lines.push([
       okSet.has(r) ? 1 : 0,      // 集計条件に合う → 1（対象）
       r.exclude ? 0 : 1,         // 手動で除外していない → 1（対象）
-      q(r.kind), q(r.name), q(r.meta.date || ''), q(r.file), q(r.sheet), q(r.crop),
+      q(r.kind), q(r.name), q(r.meta.date || ''), q(r.file), q(r.sheet), q(displayCrop(r, al)),
       r.area ?? '', q(r.areaUnit), r.yld ?? '', q(r.yldUnit),
       r.price ?? '', q(r.priceUnit)
     ].join(','));
@@ -1630,10 +1645,10 @@ $('cropChips').addEventListener('dblclick', e => {
   if (chip) addAliasLine(chip.dataset.crop);
 });
 
-// 抽出結果の作目欄のダブルクリック
+// 抽出結果の作目欄のダブルクリック（元の作目名で別名欄に追加）
 $('raw').addEventListener('dblclick', e => {
   const inp = e.target.closest('input[data-k="crop"]');
-  if (inp) addAliasLine(inp.value);
+  if (inp) addAliasLine(inp.dataset.raw);
 });
 
 // 表示・非表示ボタン
