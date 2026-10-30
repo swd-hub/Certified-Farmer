@@ -60,11 +60,12 @@
 
   .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 5px 12px; border-bottom: 1px solid var(--border); background: var(--warm-dark); font-size: .78em; color: #333; }
   .legend b { font-weight: 700; }
+
   /* ===== 地図 ===== */
   #mapWrap { flex: 1; position: relative; min-width: 0; overflow: hidden; }
   #map { width: 100%; height: 100%; }
 
-  /* ===== 詳細モーダル（ALmapのスライドパネルを流用） ===== */
+  /* ===== 詳細パネル（スライド） ===== */
   .info-panel { position: absolute; top: 0; left: -420px; width: 400px; height: 100%; background: #f9f9f9;
                 border-right: 1px solid #ccc; box-shadow: 2px 0 5px rgba(0,0,0,.2);
                 transition: left .3s ease, visibility .3s; overflow-y: auto; z-index: 1000; visibility: hidden; pointer-events: none; }
@@ -116,6 +117,7 @@
       </div>
       <details>
         <summary>読み取り設定（シート・セル位置）</summary>
+        <p style="font-size:.82em;color:#555;margin:6px 0 0">※ 住所・名前・フリガナ・代表者・連絡先は、まず「ラベル（住所 など）」を探して読み取ります。見つからない場合のみ下の固定セルを使います。</p>
         <div class="cellgrid">
           <label for="cSheet">シート名</label><input type="text" id="cSheet">
           <label for="cName">名前（個人・法人）</label><input type="text" id="cName">
@@ -164,7 +166,7 @@
 </main>
 
 <script>
-// ===== 設定（読み取りセル）=====
+// ===== 設定（読み取りセル：ラベルが見つからない場合の予備）=====
 const DEFAULT_CELLS = { sheet: '申請書１', name: 'Q7', kana: 'Q6', rep: 'AB7', addr: 'Q5', tel: 'AD5' };
 const CELL_KEY = 'addrMapCells';
 const GEO_KEY = 'addrMapGeoCache';
@@ -172,6 +174,17 @@ const ADDR_PREFIX = '島根県';
 const SUPPORTED_EXT = ['xlsx', 'xlsm'];
 const cellInputs = { sheet: 'cSheet', name: 'cName', kana: 'cKana', rep: 'cRep', addr: 'cAddr', tel: 'cTel' };
 const LABEL_LINE = /^(作目|部門|現状|目標|種別|名前|フリガナ|代表者|住所|連絡先|検索結果|位置|緯度|経度|ファイル|フォルダ|詳細|機械|耕種|畜産|施設|記載なし)/;
+const LEVEL_LABEL = ['番地まで一致', '町名レベル（番地は不一致）', '市区町村レベル（町名も不一致）'];
+
+// ラベル（見出し文字）で値を探す設定。申請書のレイアウトの違いに対応するため、
+// 固定セルより先にこちらを使う。
+const LABEL_SET = {
+  name: ['個人・法人名', '氏名'],
+  kana: ['フリガナ'],
+  rep:  ['代表者氏名'],
+  addr: ['住所'],
+  tel:  ['連絡先', '電話番号']
+};
 
 let records = [];          // {id,file,folder,sheet,name,kana,rep,addr,tel,lat,lng,geoTitle,geo,checked}
 let markers = new Map();   // id -> marker
@@ -185,6 +198,7 @@ const $ = id => document.getElementById(id);
 const setStatus = m => { $('status').textContent = m; };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const norm = s => String(s ?? '').normalize('NFKC').toLowerCase();
+const nlabel = s => String(s ?? '').replace(/[\s\u3000]/g, '');
 
 // ===== 設定の保存・読込 =====
 function loadCells() {
@@ -243,7 +257,7 @@ function filePartFromFilter() {
   return s || '全件';
 }
 
-// ===== 地図初期化（ALmapのGoogleタイル設定を流用）=====
+// ===== 地図初期化 =====
 function initMap() {
   const road = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'], attribution: '© Google Maps' });
@@ -255,7 +269,6 @@ function initMap() {
   setTimeout(() => map.invalidateSize(), 100);
 }
 
-// ===== フォルダ選定・Excel読込 =====
 // ===== 前回フォルダの記憶（IndexedDB）=====
 function openHandleDb() {
   return new Promise((resolve, reject) => {
@@ -288,6 +301,7 @@ async function refreshLastDirUi() {
   return h;
 }
 
+// ===== フォルダ選定・Excel読込 =====
 async function pickFolder() {
   if (!window.showDirectoryPicker) { alert('このブラウザは非対応です。Chrome か Edge をご利用ください。'); return; }
   let h;
@@ -349,6 +363,47 @@ function cellText(ws, addr) {
   return String(c.w ?? c.v).replace(/[\u3000\s]+/g, ' ').trim();
 }
 
+// ===== ラベル検索（レイアウトの違いに対応）=====
+// 上部（申請者欄あたり）のうち、指定ラベルに一致するセルを行→列の順に集める
+function findLabelCells(ws, labels) {
+  const hits = [];
+  for (const key in ws) {
+    if (key[0] === '!') continue;
+    const { r, c } = XLSX.utils.decode_cell(key);
+    if (r > 19) continue;
+    const raw = ws[key].w ?? ws[key].v;
+    if (raw === undefined || raw === null || raw === '') continue;
+    const t = nlabel(raw);
+    if (labels.some(l => t === nlabel(l) || t.startsWith(nlabel(l)))) hits.push({ key, r, c });
+  }
+  return hits.sort((a, b) => a.r - b.r || a.c - b.c).map(h => h.key);
+}
+
+// ラベルの右側（同じ行）の最初の空でないセル。なければ1〜2行下の近傍を探す
+function valueNear(ws, key) {
+  const { r, c } = XLSX.utils.decode_cell(key);
+  for (let i = 1; i <= 25; i++) {
+    const v = cellText(ws, XLSX.utils.encode_cell({ r, c: c + i }));
+    if (v) return v;
+  }
+  for (let dr = 1; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 6; dc++) {
+      if (c + dc < 0) continue;
+      const v = cellText(ws, XLSX.utils.encode_cell({ r: r + dr, c: c + dc }));
+      if (v) return v;
+    }
+  }
+  return '';
+}
+
+function lookupByLabel(ws, labels) {
+  for (const key of findLabelCells(ws, labels)) {
+    const v = valueNear(ws, key);
+    if (v) return v;
+  }
+  return '';
+}
+
 // ===== 詳細情報の抽出（作目・部門／農業生産施設／機械の取得計画）=====
 function findSheet(wb, name) {
   const want = norm(name);
@@ -360,7 +415,7 @@ function extractDetails(wb, ws1) {
   // 申請書１ ②(1)生産：耕種(C列=名称, F列=現状の作付面積) / 畜産(N列=名称, Q列=現状の飼養頭数)
   for (let r = 27; r <= 45; r++) {
     const cn = cellText(ws1, 'C' + r), ln = cellText(ws1, 'N' + r);
-    if (/^[※（(注備]/.test(cn)) break;           // 表の下の注記に入ったら終了
+    if (/^[※（(注備]/.test(cn)) break;
     if (cn && !cn.includes('合計')) d.crops.push({ name: cn, val: cellText(ws1, 'F' + r), unit: cellText(ws1, 'G' + r) || 'a' });
     if (ln && !ln.includes('合計')) d.livestock.push({ name: ln, val: cellText(ws1, 'Q' + r), unit: cellText(ws1, 'R' + r) || '頭' });
   }
@@ -372,7 +427,7 @@ function extractDetails(wb, ws1) {
       if (type && !type.includes('合計')) d.facilities.push({ type, now: cellText(ws2, 'AA' + r), goal: cellText(ws2, 'AE' + r) });
     }
   }
-  // 申請書３ （別紙）取得計画：「農業用機械等の名称」ヘッダーの下〜「備考」まで（ヘッダー行がファイルにより1行ずれる）
+  // 申請書３ （別紙）取得計画：「農業用機械等の名称」ヘッダーの下〜「備考」まで
   const ws3 = findSheet(wb, '申請書３');
   if (ws3) {
     let hdr = 12;
@@ -396,15 +451,23 @@ async function readFile(fh, rel, stats) {
     const sheetName = wb.SheetNames.find(n => norm(n).includes(want)) || wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
     const details = extractDetails(wb, ws);
+
+    // ラベルで探し、見つからなければ固定セルを使う
+    const pick = (k, fixedCell) => lookupByLabel(ws, LABEL_SET[k]) || cellText(ws, fixedCell);
+
     const rec = {
       id: records.length + 1, file: fh.name, folder: rel || '(選択フォルダ直下)', sheet: sheetName,
-      name: cellText(ws, cells.name), kana: cellText(ws, cells.kana), rep: cellText(ws, cells.rep),
-      addr: cellText(ws, cells.addr), tel: cellText(ws, cells.tel),
+      name: pick('name', cells.name),
+      kana: pick('kana', cells.kana),
+      rep:  pick('rep',  cells.rep),
+      addr: pick('addr', cells.addr),
+      tel:  pick('tel',  cells.tel),
       details, lat: null, lng: null, geoTitle: '', geo: '', geoLevel: 0, checked: true
     };
     if (!rec.addr) { stats.skipped++; }
     records.push(rec);
   } catch (e) {
+    console.error(fh.name, e);
     stats.errors++;
   }
 }
@@ -505,7 +568,7 @@ async function focusRecord(id) {
       }
     }
   }
-  // 一覧の選択表示（ピンをクリックした場合は一覧もスクロール）
+  // 一覧の選択表示
   document.querySelectorAll('#tbl tbody tr').forEach(tr => {
     const on = Number(tr.dataset.id) === id;
     tr.classList.toggle('sel', on);
@@ -520,7 +583,7 @@ async function focusRecord(id) {
   const m = markers.get(id);
   if (m) { m.setStyle(MARKER_STYLE_SEL).setRadius(MARKER_STYLE_SEL.radius); m.bringToFront(); }
   if (!r.checked) return;
-  // 詳細パネルに隠れない位置（パネルの右側の中央）にピンが来るよう移動
+  // 詳細パネルに隠れない位置にピンが来るよう移動
   const z = Math.max(map.getZoom(), 17);
   const shift = $('infoPanel').offsetWidth / 2;
   const center = map.unproject(map.project([r.lat, r.lng], z).subtract([shift, 0]), z);
@@ -533,8 +596,6 @@ function buildQuery(addr) {
   const a = addr.replace(/\s+/g, '');
   return (ADDR_PREFIX && !a.startsWith(ADDR_PREFIX)) ? ADDR_PREFIX + a : a;
 }
-
-const LEVEL_LABEL = ['番地まで一致', '町名レベル（番地は不一致）', '市区町村レベル（町名も不一致）'];
 
 async function gsiSearch(q) {
   if (geoCache[q]) return geoCache[q];
@@ -673,7 +734,7 @@ async function copyDetail() {
   }
 }
 
-// ===== 詳細パネル（後で内容を拡張予定）=====
+// ===== 詳細パネル =====
 function detailSections(r) {
   const d = r.details;
   if (!d) return '';
@@ -706,6 +767,7 @@ function showDetail(r) {
   $('infoPanel').classList.add('open');
 }
 
+// ===== CSV読込・保存 =====
 function parseCsv(text) {
   text = String(text || '').replace(/^\uFEFF/, '');
   const rows = [];
@@ -802,7 +864,6 @@ async function importCsvFile(file) {
   applyCsvRows(parseCsv(text));
 }
 
-// ===== CSV保存 =====
 function exportCsv() {
   const head = ['チェック', 'No', '名前', 'フリガナ', '代表者', '住所', '連絡先', '緯度', '経度', '検索結果', '精度', 'ファイル名', 'フォルダ', '詳細JSON'];
   const lines = [head.map(csvQuote).join(',')];
