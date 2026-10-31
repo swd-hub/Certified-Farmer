@@ -17,7 +17,10 @@
   body { display: flex; flex-direction: column; background: var(--warm); color: var(--text);
          font-family: "Yu Gothic", "Meiryo", Arial, sans-serif; font-size: 14px; }
   header { padding: 10px 18px; background: var(--olive); color: #fff; border-top: 4px solid var(--olive-light);
-           font-size: 1.15em; font-weight: 700; letter-spacing: .04em; }
+           font-size: 1.15em; font-weight: 700; letter-spacing: .04em;
+           display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  header button { min-height: 28px; padding: 2px 12px; background: transparent; border-color: #fff; color: #fff; font-size: .8em; letter-spacing: 0; }
+  header button:hover:not(:disabled) { background: var(--olive-light); border-color: #fff; }
   main { flex: 1; display: flex; min-height: 0; }
 
   /* ===== 左：操作・一覧パネル ===== */
@@ -58,14 +61,14 @@
   .ok { color: #2e7d32; font-weight: 700; }
   .ng { color: #c62828; font-weight: 700; }
 
+  select { min-height: 32px; padding: 4px 8px; border: 1px solid #B1A887; border-radius: 4px; font: inherit; background: #fff; }
   .legend { display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 5px 12px; border-bottom: 1px solid var(--border); background: var(--warm-dark); font-size: .78em; color: #333; }
   .legend b { font-weight: 700; }
-
   /* ===== 地図 ===== */
   #mapWrap { flex: 1; position: relative; min-width: 0; overflow: hidden; }
   #map { width: 100%; height: 100%; }
 
-  /* ===== 詳細パネル（スライド） ===== */
+  /* ===== 詳細モーダル（ALmapのスライドパネルを流用） ===== */
   .info-panel { position: absolute; top: 0; left: -420px; width: 400px; height: 100%; background: #f9f9f9;
                 border-right: 1px solid #ccc; box-shadow: 2px 0 5px rgba(0,0,0,.2);
                 transition: left .3s ease, visibility .3s; overflow-y: auto; z-index: 1000; visibility: hidden; pointer-events: none; }
@@ -86,10 +89,36 @@
   .gbtn { display: block; margin-top: 10px; padding: 10px; text-align: center; border-radius: 6px; background: #4285F4;
           color: #fff; text-decoration: none; font-weight: 700; }
   .leaflet-control-layers { margin-top: 10px; margin-right: 10px; }
+
+  body.mapfull #side { display: none; }
+
+  /* ===== 右：作目名処理ドロワー（出し入れ可能）===== */
+  #cropPanel { width: 0; flex: none; overflow: hidden; background: #fff; border-left: 0 solid var(--border);
+               transition: width .3s ease; }
+  #cropPanel.open { width: 360px; border-left-width: 1px; }
+  #cropPanel .cp-inner { width: 360px; height: 100%; overflow-y: auto; padding: 10px 12px; }
+  #cropPanel .cp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+                        padding-bottom: 4px; border-bottom: 2px solid #ccc; }
+  #cropPanel .cp-head h3 { margin: 0; font-size: 1.05em; color: var(--olive); }
+  #cropPanel .cp-close { border: none; background: none; font-size: 20px; color: #666; min-height: 0; padding: 0 4px; }
+  #cropPanel h4 { margin: 12px 0 4px; padding: 3px 6px; border-left: 4px solid var(--olive-light);
+                  background: var(--warm-dark); color: var(--olive); font-size: .9em; }
+  #alias { width: 100%; min-height: 150px; resize: vertical; font-family: Consolas, "Meiryo", monospace; font-size: .9em; }
+  #alias.drag { background: var(--warm-dark); border-color: var(--olive); }
+  #aliasMsg { min-height: 18px; margin-top: 4px; font-size: .85em; font-weight: 600; color: var(--olive); }
+  #aliasMsg.warn { color: #c62828; }
+  .cp-note { margin: 4px 0 0; font-size: .8em; color: #444; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .crop-chip { border: 1px solid var(--olive); color: var(--olive); background: #fff; border-radius: 14px;
+               padding: 2px 9px; font-size: .8em; cursor: pointer; user-select: none; }
+  .crop-chip:hover { background: var(--warm-dark); }
+  .crop-chip.done { opacity: .45; text-decoration: line-through; }
+  .crop-chip.pick { background: var(--olive); color: #fff; }
+  .crop-chip small { opacity: .7; margin-left: 3px; }
 </style>
 </head>
 <body>
-<header>認定農業者 住所マッピング</header>
+<header><span>認定農業者 住所マッピング</span><span><button type="button" id="btnMapFull" aria-pressed="false" title="左の操作・一覧パネルを隠して地図を広げます（Escで戻す）">地図を全面表示</button> <button type="button" id="btnCropPanel" aria-expanded="false">作目名処理 ◀</button></span></header>
 <main>
   <div id="side">
     <div class="sec">
@@ -115,9 +144,21 @@
       <div class="row">
         <textarea id="textFilter" placeholder="ここに文字を貼ると、その文字を含む行にチェックし、チェックしたピンだけを地図に表示します。空欄にすると全行チェックです。"></textarea>
       </div>
+      <div class="row">
+        <label for="sizeMode">ピンのサイズ（作目を条件にした時）</label>
+        <select id="sizeMode">
+          <option value="">（空白）一律</option>
+          <option value="area">面積</option>
+          <option value="prod">生産量</option>
+        </select>
+        <select id="sizePhase" title="現状か目標（計画）か">
+          <option value="now">現状</option>
+          <option value="goal">目標（計画）</option>
+        </select>
+      </div>
+      <div id="sizeNote" class="cp-note" style="margin:0 0 8px"></div>
       <details>
         <summary>読み取り設定（シート・セル位置）</summary>
-        <p style="font-size:.82em;color:#555;margin:6px 0 0">※ 住所・名前・フリガナ・代表者・連絡先は、まず「ラベル（住所 など）」を探して読み取ります。見つからない場合のみ下の固定セルを使います。</p>
         <div class="cellgrid">
           <label for="cSheet">シート名</label><input type="text" id="cSheet">
           <label for="cName">名前（個人・法人）</label><input type="text" id="cName">
@@ -163,28 +204,37 @@
       </div>
     </div>
   </div>
+
+  <aside id="cropPanel" aria-label="作目名処理">
+    <div class="cp-inner">
+      <div class="cp-head"><h3>作目名処理</h3><button type="button" class="cp-close" id="cropClose" aria-label="閉じる">×</button></div>
+      <label for="alias">作目の別名（1行に「別名=正式名」）</label>
+      <textarea id="alias" placeholder="米=水稲&#10;ねぎ=神西ねぎ"></textarea>
+      <input type="file" id="aliasPicker" accept=".txt,.csv,.tsv,.md,.log,text/*" hidden>
+      <div class="row" style="margin-top:6px">
+        <button type="button" id="btnAliasLoad">別名ファイル読込</button>
+        <button type="button" id="btnAliasSave">別名ファイル保存</button>
+      </div>
+      <div class="cp-note">別名欄のダブルクリック／ドラッグ＆ドロップでも読み込めます。統計ツールの別名ファイルをそのまま使えます。</div>
+      <div id="aliasMsg"></div>
+      <h4>① 抽出された作目（ダブルクリックで別名欄に追加）</h4>
+      <div class="chips" id="cropChips"><span class="cp-note">（読込後に作目の一覧が表示されます）</span></div>
+      <h4>② 処理後の作目（クリックで地図を絞込）</h4>
+      <div class="chips" id="cropResolved"><span class="cp-note">（読込後に表示されます）</span></div>
+    </div>
+  </aside>
 </main>
 
 <script>
-// ===== 設定（読み取りセル：ラベルが見つからない場合の予備）=====
+// ===== 設定（読み取りセル）=====
 const DEFAULT_CELLS = { sheet: '申請書１', name: 'Q7', kana: 'Q6', rep: 'AB7', addr: 'Q5', tel: 'AD5' };
 const CELL_KEY = 'addrMapCells';
 const GEO_KEY = 'addrMapGeoCache';
+const ALIAS_KEY = 'addrMapAlias';
 const ADDR_PREFIX = '島根県';
 const SUPPORTED_EXT = ['xlsx', 'xlsm'];
 const cellInputs = { sheet: 'cSheet', name: 'cName', kana: 'cKana', rep: 'cRep', addr: 'cAddr', tel: 'cTel' };
 const LABEL_LINE = /^(作目|部門|現状|目標|種別|名前|フリガナ|代表者|住所|連絡先|検索結果|位置|緯度|経度|ファイル|フォルダ|詳細|機械|耕種|畜産|施設|記載なし)/;
-const LEVEL_LABEL = ['番地まで一致', '町名レベル（番地は不一致）', '市区町村レベル（町名も不一致）'];
-
-// ラベル（見出し文字）で値を探す設定。申請書のレイアウトの違いに対応するため、
-// 固定セルより先にこちらを使う。
-const LABEL_SET = {
-  name: ['個人・法人名', '氏名'],
-  kana: ['フリガナ'],
-  rep:  ['代表者氏名'],
-  addr: ['住所'],
-  tel:  ['連絡先', '電話番号']
-};
 
 let records = [];          // {id,file,folder,sheet,name,kana,rep,addr,tel,lat,lng,geoTitle,geo,checked}
 let markers = new Map();   // id -> marker
@@ -198,7 +248,6 @@ const $ = id => document.getElementById(id);
 const setStatus = m => { $('status').textContent = m; };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const norm = s => String(s ?? '').normalize('NFKC').toLowerCase();
-const nlabel = s => String(s ?? '').replace(/[\s\u3000]/g, '');
 
 // ===== 設定の保存・読込 =====
 function loadCells() {
@@ -218,12 +267,128 @@ function saveGeoCache() { try { localStorage.setItem(GEO_KEY, JSON.stringify(geo
 
 function emptyDetails() { return { crops: [], livestock: [], facilities: [], machines: [] }; }
 
+// ===== 作目名処理（別名=正式名。統計ツールと同じ書式）=====
+const aliasNorm = s => String(s ?? '').normalize('NFKC').replace(/\s/g, '');
+let aliasMap = {};
+function parseAlias() {
+  const m = {};
+  $('alias').value.replace(/＝/g, '=').split('\n').forEach(l => {
+    const i = l.indexOf('=');
+    if (i < 0) return;
+    const a = aliasNorm(l.slice(0, i)), b = l.slice(i + 1).trim();
+    if (a && b) m[a] = b;
+  });
+  return m;
+}
+const resolveCrop = name => aliasMap[aliasNorm(name)] || name;
+const aliasHasKey = key => Object.prototype.hasOwnProperty.call(aliasMap, aliasNorm(key));
+// 名前のセル用：別名が適用されたら元の名前をツールチップに残す
+const cropCell = name => { const n = resolveCrop(name); return n !== name ? `<span title="元の作目: ${esc(name)}">${esc(n)}</span>` : esc(name); };
+
+function cropNameCounts(resolved) {
+  const m = new Map();
+  records.forEach(r => {
+    const d = r.details || emptyDetails();
+    const names = new Set([...(d.crops || []), ...(d.livestock || [])].map(c => c.name).filter(Boolean).map(n => resolved ? resolveCrop(n) : n));
+    names.forEach(n => m.set(n, (m.get(n) || 0) + 1));
+  });
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ja'));
+}
+function refreshCropUi() {
+  const none = '<span class="cp-note">（読込後に表示されます）</span>';
+  const raw = cropNameCounts(false), res = cropNameCounts(true);
+  $('cropChips').innerHTML = raw.map(([n, c]) =>
+    `<span class="crop-chip${aliasHasKey(n) ? ' done' : ''}" data-crop="${esc(n)}" title="ダブルクリックで別名欄に追加">${esc(n)}<small>${c}</small></span>`).join('') || none;
+  const cur = norm($('textFilter').value.trim());
+  $('cropResolved').innerHTML = res.map(([n, c]) =>
+    `<span class="crop-chip${cur && cur === norm(n) ? ' pick' : ''}" data-crop="${esc(n)}" title="クリックでこの作目の農家だけを地図に表示">${esc(n)}<small>${c}</small></span>`).join('') || none;
+}
+function showAliasMsg(text, warn) { const el = $('aliasMsg'); el.textContent = text; el.classList.toggle('warn', !!warn); }
+function saveAlias() { try { localStorage.setItem(ALIAS_KEY, $('alias').value); } catch (e) { } }
+function loadAliasSaved() { try { $('alias').value = localStorage.getItem(ALIAS_KEY) || ''; } catch (e) { } aliasMap = parseAlias(); }
+
+function addAliasLine(crop) {
+  crop = (crop || '').trim();
+  if (!crop) return;
+  const ta = $('alias');
+  ta.focus();
+  if (aliasHasKey(crop)) { showAliasMsg(`「${crop}」は既に別名欄にあります`, true); return; }
+  const sep = ta.value && !ta.value.endsWith('\n') ? '\n' : '';
+  ta.value += sep + `${crop}=`;
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.scrollTop = ta.scrollHeight;
+  showAliasMsg(`追加しました: ${crop}=（右側に正式名を入力してください）`, false);
+  onAliasChanged();
+}
+
+let aliasTimer = null;
+function onAliasChanged() {
+  aliasMap = parseAlias();
+  saveAlias();
+  refreshCropUi();
+  clearTimeout(aliasTimer);
+  aliasTimer = setTimeout(() => {
+    if ($('textFilter').value.trim() && records.length) applyTextChecks();   // 絞込中は別名を反映して再チェック
+    if (detailRecord) showDetail(detailRecord);
+  }, 300);
+}
+
+async function readTextFile(file) {
+  const buf = await file.arrayBuffer();
+  try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(buf), enc: 'UTF-8' }; }
+  catch { return { text: new TextDecoder('shift_jis').decode(buf), enc: 'Shift_JIS' }; }
+}
+async function loadAliasFile(file) {
+  if (!file) return;
+  const ta = $('alias');
+  if (ta.value.trim() && !confirm('別名欄の内容を、読み込んだファイルの内容で置き換えますか？')) return;
+  const { text, enc } = await readTextFile(file);
+  ta.value = text.replace(/\r\n?/g, '\n');
+  onAliasChanged();
+  showAliasMsg(`読込: ${file.name}（${enc}）`, false);
+}
+async function pickAliasFile() {
+  if (!window.showOpenFilePicker) { $('aliasPicker').click(); return; }
+  let handle;
+  try {
+    const last = await dbOp('readonly', st => st.get('lastAliasFile')).catch(() => null);
+    [handle] = await window.showOpenFilePicker({
+      startIn: last || 'documents', multiple: false,
+      types: [{ description: '別名ファイル（テキスト）', accept: { 'text/plain': ['.txt', '.csv', '.tsv', '.md', '.log'] } }]
+    });
+  } catch (e) { if (e.name !== 'AbortError') alert('別名ファイルを開けませんでした: ' + e.message); return; }
+  dbOp('readwrite', st => st.put(handle, 'lastAliasFile')).catch(() => { });
+  await loadAliasFile(await handle.getFile());
+}
+function saveAliasFile() {
+  const blob = new Blob(['\uFEFF' + $('alias').value.replace(/\r?\n/g, '\r\n')], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '作目別名.txt';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ===== 右ドロワーの出し入れ =====
+function setMapFull(on) {
+  document.body.classList.toggle('mapfull', on);
+  $('btnMapFull').textContent = on ? '一覧を表示' : '地図を全面表示';
+  $('btnMapFull').setAttribute('aria-pressed', on ? 'true' : 'false');
+  setTimeout(() => map && map.invalidateSize(), 50);
+}
+function setCropPanel(open) {
+  $('cropPanel').classList.toggle('open', open);
+  $('btnCropPanel').textContent = open ? '作目名処理 ▶' : '作目名処理 ◀';
+  $('btnCropPanel').setAttribute('aria-expanded', open ? 'true' : 'false');
+  setTimeout(() => map && map.invalidateSize(), 330);
+}
+
 function recordSearchText(r) {
   const d = r.details || emptyDetails();
   const parts = [
     r.name, r.kana, r.rep, r.addr, r.tel, r.file, r.folder, r.geoTitle,
-    ...(d.crops || []).map(c => [c.name, c.val, c.unit].join(' ')),
-    ...(d.livestock || []).map(c => [c.name, c.val, c.unit].join(' ')),
+    ...(d.crops || []).map(c => [c.name, resolveCrop(c.name), c.val, c.unit].join(' ')),
+    ...(d.livestock || []).map(c => [c.name, resolveCrop(c.name), c.val, c.unit].join(' ')),
     ...(d.facilities || []).map(f => [f.type, f.now, f.goal].join(' ')),
     ...(d.machines || [])
   ];
@@ -244,6 +409,7 @@ function applyTextChecks() {
   });
   renderList();
   refreshMarkers();
+  refreshCropUi();
   const on = records.filter(r => r.checked).length;
   if (needles.length) setStatus(`貼付文字に一致: ${on} / ${records.length} 件をチェックし、そのピンだけを表示しています。`);
 }
@@ -257,7 +423,7 @@ function filePartFromFilter() {
   return s || '全件';
 }
 
-// ===== 地図初期化 =====
+// ===== 地図初期化（ALmapのGoogleタイル設定を流用）=====
 function initMap() {
   const road = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'], attribution: '© Google Maps' });
@@ -269,6 +435,7 @@ function initMap() {
   setTimeout(() => map.invalidateSize(), 100);
 }
 
+// ===== フォルダ選定・Excel読込 =====
 // ===== 前回フォルダの記憶（IndexedDB）=====
 function openHandleDb() {
   return new Promise((resolve, reject) => {
@@ -301,7 +468,6 @@ async function refreshLastDirUi() {
   return h;
 }
 
-// ===== フォルダ選定・Excel読込 =====
 async function pickFolder() {
   if (!window.showDirectoryPicker) { alert('このブラウザは非対応です。Chrome か Edge をご利用ください。'); return; }
   let h;
@@ -340,6 +506,7 @@ async function loadFolder(handle) {
   const stats = { files: 0, errors: 0, skipped: 0 };
   await scanDir(dirHandle, '', stats);
   applyTextChecks();
+  refreshCropUi();
   $('btnCsv').disabled = records.length === 0;
   setStatus(`フォルダ: ${dirHandle.name}\n確認ファイル数: ${stats.files} / 抽出件数: ${records.length} / 住所が空: ${stats.skipped} / 開けなかった件数: ${stats.errors}`);
   if ($('autoGeo').checked && records.length) await runGeocode();
@@ -363,47 +530,6 @@ function cellText(ws, addr) {
   return String(c.w ?? c.v).replace(/[\u3000\s]+/g, ' ').trim();
 }
 
-// ===== ラベル検索（レイアウトの違いに対応）=====
-// 上部（申請者欄あたり）のうち、指定ラベルに一致するセルを行→列の順に集める
-function findLabelCells(ws, labels) {
-  const hits = [];
-  for (const key in ws) {
-    if (key[0] === '!') continue;
-    const { r, c } = XLSX.utils.decode_cell(key);
-    if (r > 19) continue;
-    const raw = ws[key].w ?? ws[key].v;
-    if (raw === undefined || raw === null || raw === '') continue;
-    const t = nlabel(raw);
-    if (labels.some(l => t === nlabel(l) || t.startsWith(nlabel(l)))) hits.push({ key, r, c });
-  }
-  return hits.sort((a, b) => a.r - b.r || a.c - b.c).map(h => h.key);
-}
-
-// ラベルの右側（同じ行）の最初の空でないセル。なければ1〜2行下の近傍を探す
-function valueNear(ws, key) {
-  const { r, c } = XLSX.utils.decode_cell(key);
-  for (let i = 1; i <= 25; i++) {
-    const v = cellText(ws, XLSX.utils.encode_cell({ r, c: c + i }));
-    if (v) return v;
-  }
-  for (let dr = 1; dr <= 2; dr++) {
-    for (let dc = -2; dc <= 6; dc++) {
-      if (c + dc < 0) continue;
-      const v = cellText(ws, XLSX.utils.encode_cell({ r: r + dr, c: c + dc }));
-      if (v) return v;
-    }
-  }
-  return '';
-}
-
-function lookupByLabel(ws, labels) {
-  for (const key of findLabelCells(ws, labels)) {
-    const v = valueNear(ws, key);
-    if (v) return v;
-  }
-  return '';
-}
-
 // ===== 詳細情報の抽出（作目・部門／農業生産施設／機械の取得計画）=====
 function findSheet(wb, name) {
   const want = norm(name);
@@ -415,8 +541,8 @@ function extractDetails(wb, ws1) {
   // 申請書１ ②(1)生産：耕種(C列=名称, F列=現状の作付面積) / 畜産(N列=名称, Q列=現状の飼養頭数)
   for (let r = 27; r <= 45; r++) {
     const cn = cellText(ws1, 'C' + r), ln = cellText(ws1, 'N' + r);
-    if (/^[※（(注備]/.test(cn)) break;
-    if (cn && !cn.includes('合計')) d.crops.push({ name: cn, val: cellText(ws1, 'F' + r), unit: cellText(ws1, 'G' + r) || 'a' });
+    if (/^[※（(注備]/.test(cn)) break;           // 表の下の注記に入ったら終了
+    if (cn && !cn.includes('合計')) d.crops.push({ name: cn, val: cellText(ws1, 'F' + r), unit: cellText(ws1, 'G' + r) || 'a', prod: cellText(ws1, 'H' + r), prodUnit: cellText(ws1, 'I' + r), gval: cellText(ws1, 'J' + r), gprod: cellText(ws1, 'L' + r) });
     if (ln && !ln.includes('合計')) d.livestock.push({ name: ln, val: cellText(ws1, 'Q' + r), unit: cellText(ws1, 'R' + r) || '頭' });
   }
   // 申請書２ イ 農業生産施設：S列=種別, AA列=現状の棟数, AE列=目標の棟数（7〜12行目）
@@ -427,7 +553,7 @@ function extractDetails(wb, ws1) {
       if (type && !type.includes('合計')) d.facilities.push({ type, now: cellText(ws2, 'AA' + r), goal: cellText(ws2, 'AE' + r) });
     }
   }
-  // 申請書３ （別紙）取得計画：「農業用機械等の名称」ヘッダーの下〜「備考」まで
+  // 申請書３ （別紙）取得計画：「農業用機械等の名称」ヘッダーの下〜「備考」まで（ヘッダー行がファイルにより1行ずれる）
   const ws3 = findSheet(wb, '申請書３');
   if (ws3) {
     let hdr = 12;
@@ -451,23 +577,15 @@ async function readFile(fh, rel, stats) {
     const sheetName = wb.SheetNames.find(n => norm(n).includes(want)) || wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
     const details = extractDetails(wb, ws);
-
-    // ラベルで探し、見つからなければ固定セルを使う
-    const pick = (k, fixedCell) => lookupByLabel(ws, LABEL_SET[k]) || cellText(ws, fixedCell);
-
     const rec = {
       id: records.length + 1, file: fh.name, folder: rel || '(選択フォルダ直下)', sheet: sheetName,
-      name: pick('name', cells.name),
-      kana: pick('kana', cells.kana),
-      rep:  pick('rep',  cells.rep),
-      addr: pick('addr', cells.addr),
-      tel:  pick('tel',  cells.tel),
+      name: cellText(ws, cells.name), kana: cellText(ws, cells.kana), rep: cellText(ws, cells.rep),
+      addr: cellText(ws, cells.addr), tel: cellText(ws, cells.tel),
       details, lat: null, lng: null, geoTitle: '', geo: '', geoLevel: 0, checked: true
     };
     if (!rec.addr) { stats.skipped++; }
     records.push(rec);
   } catch (e) {
-    console.error(fh.name, e);
     stats.errors++;
   }
 }
@@ -539,6 +657,53 @@ function renderList() {
   updateChkAll();
 }
 
+// ===== ピンのサイズ（作目を条件にした時：面積／生産量に応じて大きさを変える）=====
+const R_DEF = 8, R_MIN = 5, R_MAX = 26;
+const sizeMap = new Map();   // id -> {rad, v}
+const numOf = x => { const t = String(x ?? '').normalize('NFKC').replace(/[,\s]/g, ''); const m = t.match(/^-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+function cropValue(r, needles, mode, phase) {
+  const goal = phase === 'goal';
+  let sum = 0, hit = false;
+  ((r.details || emptyDetails()).crops || []).forEach(c => {
+    const nm = norm(c.name), rs = norm(resolveCrop(c.name));
+    if (!needles.some(n => nm.includes(n) || rs.includes(n))) return;
+    const a = numOf(goal ? c.gval : c.val);
+    const area = a == null ? null : (/ha/i.test(String(c.unit || '').normalize('NFKC')) ? a * 100 : a);   // a（アール）に換算
+    let v = null;
+    if (mode === 'area') v = area;
+    else {
+      const p = numOf(goal ? c.gprod : c.prod);
+      const tonne = /^t$|トン/i.test(String(c.prodUnit || '').normalize('NFKC').trim());
+      v = p != null ? p * (tonne ? 1000 : 1) : null;
+    }
+    if (v != null) { sum += v; hit = true; }
+  });
+  return hit ? sum : null;
+}
+function computeSizes() {
+  sizeMap.clear();
+  const mode = $('sizeMode').value, note = $('sizeNote');
+  const needles = queryNeedles($('textFilter').value);
+  if (!mode) { note.textContent = ''; return; }
+  if (!needles.length) { note.textContent = '作目を条件にする（②の作目をクリック、または文字貼付）と、ピンの大きさが変わります。'; return; }
+  const vals = [];
+  records.forEach(r => { if (!r.checked) return; const v = cropValue(r, needles, mode, $('sizePhase').value); if (v != null && v > 0) vals.push([r.id, v]); });
+  const label = ($('sizePhase').value === 'goal' ? '目標' : '現状') + (mode === 'area' ? '面積' : '生産量'), unit = mode === 'area' ? 'a' : 'kg';
+  if (!vals.length) {
+    note.textContent = `${label}の値がある農家がありません（一律のサイズで表示）。`;
+    return;
+  }
+  const vmax = Math.max(...vals.map(x => x[1]));
+  vals.forEach(([id, v]) => sizeMap.set(id, { v, rad: R_MIN + (R_MAX - R_MIN) * Math.sqrt(v / vmax) }));
+  const none = records.filter(r => r.checked && !sizeMap.has(r.id)).length;
+  note.textContent = `${label}で表示: ${vals.length}件（最大 ${vmax.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${unit}。円の面積が${label}に比例）` + (none ? ` / 値なし ${none}件は一律サイズ` : '');
+}
+const baseRad = id => sizeMap.has(id) ? sizeMap.get(id).rad : R_DEF;
+const tipText = r => {
+  const z = sizeMap.get(r.id);
+  return (r.name || '(名前なし)') + (z ? `（${$('sizePhase').value === 'goal' ? '目標' : '現状'}${$('sizeMode').value === 'area' ? '面積' : '生産量'} ${z.v.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${$('sizeMode').value === 'area' ? 'a' : 'kg'}）` : '');
+};
+
 const MARKER_STYLE = { radius: 8, color: '#fff', weight: 2, fillColor: '#67571D', fillOpacity: .9 };
 const MARKER_STYLE_SEL = { radius: 12, color: '#fff', weight: 3, fillColor: '#d32f2f', fillOpacity: 1 };
 
@@ -568,22 +733,22 @@ async function focusRecord(id) {
       }
     }
   }
-  // 一覧の選択表示
+  // 一覧の選択表示（ピンをクリックした場合は一覧もスクロール）
   document.querySelectorAll('#tbl tbody tr').forEach(tr => {
     const on = Number(tr.dataset.id) === id;
     tr.classList.toggle('sel', on);
     if (on) tr.scrollIntoView({ block: 'nearest' });
   });
   // 前回のピンを元に戻し、今回のピンを強調
-  if (selectedId !== null && markers.has(selectedId)) markers.get(selectedId).setStyle(MARKER_STYLE).setRadius(MARKER_STYLE.radius);
+  if (selectedId !== null && markers.has(selectedId)) markers.get(selectedId).setStyle(MARKER_STYLE).setRadius(baseRad(selectedId));
   selectedId = id;
   showDetail(r);
   if (r.lat === null) { setStatus(msg || '位置が取得できていません。'); return; }
   if (msg) setStatus(msg);
   const m = markers.get(id);
-  if (m) { m.setStyle(MARKER_STYLE_SEL).setRadius(MARKER_STYLE_SEL.radius); m.bringToFront(); }
+  if (m) { m.setStyle(MARKER_STYLE_SEL).setRadius(Math.max(baseRad(id) + 3, MARKER_STYLE_SEL.radius)); m.bringToFront(); }
   if (!r.checked) return;
-  // 詳細パネルに隠れない位置にピンが来るよう移動
+  // 詳細パネルに隠れない位置（パネルの右側の中央）にピンが来るよう移動
   const z = Math.max(map.getZoom(), 17);
   const shift = $('infoPanel').offsetWidth / 2;
   const center = map.unproject(map.project([r.lat, r.lng], z).subtract([shift, 0]), z);
@@ -596,6 +761,8 @@ function buildQuery(addr) {
   const a = addr.replace(/\s+/g, '');
   return (ADDR_PREFIX && !a.startsWith(ADDR_PREFIX)) ? ADDR_PREFIX + a : a;
 }
+
+const LEVEL_LABEL = ['番地まで一致', '町名レベル（番地は不一致）', '市区町村レベル（町名も不一致）'];
 
 async function gsiSearch(q) {
   if (geoCache[q]) return geoCache[q];
@@ -661,14 +828,16 @@ async function runGeocode() {
 // ===== マーカー =====
 function addMarker(r) {
   if (r.lat === null || !r.checked || markers.has(r.id)) return;
-  const m = L.circleMarker([r.lat, r.lng], r.id === selectedId ? MARKER_STYLE_SEL : MARKER_STYLE);
-  m.bindTooltip(r.name || '(名前なし)');
+  const rad = baseRad(r.id);
+  const m = L.circleMarker([r.lat, r.lng], r.id === selectedId ? Object.assign({}, MARKER_STYLE_SEL, { radius: Math.max(rad + 3, MARKER_STYLE_SEL.radius) }) : Object.assign({}, MARKER_STYLE, { radius: rad }));
+  m.bindTooltip(tipText(r));
   m.on('click', () => focusRecord(r.id));
   m.addTo(markerLayer);
   markers.set(r.id, m);
 }
 function clearMarkers() { markerLayer.clearLayers(); markers.clear(); }
 function refreshMarkers() {
+  computeSizes();
   clearMarkers();
   records.forEach(r => { if (r.checked && r.lat !== null) addMarker(r); });
 }
@@ -708,8 +877,8 @@ function detailPlainText(r) {
   add('フォルダ', r.folder);
   const d = r.details || emptyDetails();
   lines.push('作目・部門名と現状');
-  (d.crops || []).forEach(c => lines.push([c.name, c.val, c.unit].filter(x => x !== '' && x != null).join('\t')));
-  (d.livestock || []).forEach(c => lines.push([c.name, c.val, c.unit].filter(x => x !== '' && x != null).join('\t')));
+  (d.crops || []).forEach(c => lines.push([resolveCrop(c.name), c.val, c.unit].filter(x => x !== '' && x != null).join('\t')));
+  (d.livestock || []).forEach(c => lines.push([resolveCrop(c.name), c.val, c.unit].filter(x => x !== '' && x != null).join('\t')));
   lines.push('農業生産施設');
   (d.facilities || []).forEach(f => lines.push([f.type, f.now, f.goal].filter(x => x !== '' && x != null).join('\t')));
   lines.push('機械施設の取得計画');
@@ -734,7 +903,7 @@ async function copyDetail() {
   }
 }
 
-// ===== 詳細パネル =====
+// ===== 詳細パネル（後で内容を拡張予定）=====
 function detailSections(r) {
   const d = r.details;
   if (!d) return '';
@@ -744,9 +913,10 @@ function detailSections(r) {
     : '<div class="none">（記載なし）</div>';
   let h = '<h4>作目・部門名と現状</h4>';
   h += '<div style="font-size:.8em;color:#000">耕種（現状の作付面積）</div>';
-  h += sub(['作目・部門名', '作付面積'], d.crops.map(c => `<tr><td>${esc(c.name)}</td><td class="num">${c.val === '' ? '-' : esc(c.val) + ' ' + esc(c.unit)}</td></tr>`));
+  const hasP = d.crops.some(c => c.prod), hasG = d.crops.some(c => c.gval || c.gprod);
+  h += sub(['作目・部門名', '作付面積'].concat(hasG ? ['目標面積'] : [], hasP ? ['生産量'] : [], hasG && hasP ? ['目標生産量'] : []), d.crops.map(c => `<tr><td>${cropCell(c.name)}</td><td class="num">${c.val === '' ? '-' : esc(c.val) + ' ' + esc(c.unit)}</td>${hasG ? `<td class="num">${v(c.gval)}</td>` : ''}${hasP ? `<td class="num">${v(c.prod)}</td>` : ''}${hasG && hasP ? `<td class="num">${v(c.gprod)}</td>` : ''}</tr>`));
   h += '<div style="font-size:.8em;color:#000">畜産（現状の飼養頭数）</div>';
-  h += sub(['作目・部門名', '飼養頭数'], d.livestock.map(c => `<tr><td>${esc(c.name)}</td><td class="num">${c.val === '' ? '-' : esc(c.val) + ' ' + esc(c.unit)}</td></tr>`));
+  h += sub(['作目・部門名', '飼養頭数'], d.livestock.map(c => `<tr><td>${cropCell(c.name)}</td><td class="num">${c.val === '' ? '-' : esc(c.val) + ' ' + esc(c.unit)}</td></tr>`));
   h += '<h4>農業生産施設（棟数）</h4>';
   h += sub(['種別', '現状', '目標'], d.facilities.map(f => `<tr><td>${esc(f.type)}</td><td class="num">${v(f.now)}</td><td class="num">${v(f.goal)}</td></tr>`));
   h += '<h4>機械施設の取得計画（別紙）</h4>';
@@ -767,7 +937,6 @@ function showDetail(r) {
   $('infoPanel').classList.add('open');
 }
 
-// ===== CSV読込・保存 =====
 function parseCsv(text) {
   text = String(text || '').replace(/^\uFEFF/, '');
   const rows = [];
@@ -845,6 +1014,7 @@ function applyCsvRows(rows) {
     renderList();
     refreshMarkers();
     fitChecked();
+    refreshCropUi();
     $('btnCsv').disabled = records.length === 0;
     setStatus(`CSV読込: 既存 ${records.length} 件のうち ${n} 件のチェック（と位置）を再現しました。`);
     return;
@@ -854,6 +1024,7 @@ function applyCsvRows(rows) {
   renderList();
   refreshMarkers();
   fitChecked();
+  refreshCropUi();
   $('btnCsv').disabled = records.length === 0;
   const on = records.filter(r => r.checked).length;
   setStatus(`CSV読込: ${records.length} 件（チェック ${on} 件）を再現しました。`);
@@ -864,6 +1035,7 @@ async function importCsvFile(file) {
   applyCsvRows(parseCsv(text));
 }
 
+// ===== CSV保存 =====
 function exportCsv() {
   const head = ['チェック', 'No', '名前', 'フリガナ', '代表者', '住所', '連絡先', '緯度', '経度', '検索結果', '精度', 'ファイル名', 'フォルダ', '詳細JSON'];
   const lines = [head.map(csvQuote).join(',')];
@@ -883,7 +1055,32 @@ function exportCsv() {
 // ===== イベント =====
 document.addEventListener('DOMContentLoaded', () => {
   loadCells();
+  loadAliasSaved();
   initMap();
+  $('sizeMode').addEventListener('change', refreshMarkers);
+  $('sizePhase').addEventListener('change', refreshMarkers);
+  $('btnMapFull').addEventListener('click', () => setMapFull(!document.body.classList.contains('mapfull')));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('mapfull') && !e.target.closest('input, textarea, select')) setMapFull(false); });
+  $('btnCropPanel').addEventListener('click', () => setCropPanel(!$('cropPanel').classList.contains('open')));
+  $('cropClose').addEventListener('click', () => setCropPanel(false));
+  $('alias').addEventListener('input', onAliasChanged);
+  $('alias').addEventListener('dblclick', pickAliasFile);
+  $('btnAliasLoad').addEventListener('click', pickAliasFile);
+  $('btnAliasSave').addEventListener('click', saveAliasFile);
+  $('aliasPicker').addEventListener('change', e => { loadAliasFile(e.target.files[0]); e.target.value = ''; });
+  ['dragenter', 'dragover'].forEach(t => $('alias').addEventListener(t, e => { e.preventDefault(); $('alias').classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(t => $('alias').addEventListener(t, e => { e.preventDefault(); $('alias').classList.remove('drag'); }));
+  $('alias').addEventListener('drop', e => loadAliasFile(e.dataTransfer.files[0]));
+  $('cropChips').addEventListener('dblclick', e => { const c = e.target.closest('.crop-chip'); if (c) addAliasLine(c.dataset.crop); });
+  $('cropResolved').addEventListener('click', e => {
+    const c = e.target.closest('.crop-chip');
+    if (!c) return;
+    const same = norm($('textFilter').value.trim()) === norm(c.dataset.crop);
+    $('textFilter').value = same ? '' : c.dataset.crop;     // もう一度押すと絞込を解除
+    applyTextChecks();
+    fitChecked();
+  });
+  refreshCropUi();
   $('btnPick').addEventListener('click', pickFolder);
   $('btnReuse').addEventListener('click', reuseFolder);
   $('btnForget').addEventListener('click', forgetFolder);
@@ -897,7 +1094,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   $('btnClear').addEventListener('click', () => {
     records = []; selectedId = null; detailRecord = null;
-    clearMarkers(); renderList(); $('infoPanel').classList.remove('open');
+    clearMarkers(); renderList(); refreshCropUi(); $('infoPanel').classList.remove('open');
     $('btnCsv').disabled = true; setStatus('クリアしました。');
   });
   $('textFilter').addEventListener('input', applyTextChecks);
