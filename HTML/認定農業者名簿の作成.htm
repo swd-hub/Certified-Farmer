@@ -1,0 +1,1327 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>認定農業者名簿 抽出・Excel作成</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --izumo-olive: #67571D;
+    --izumo-olive-light: #8B7831;
+    --izumo-warm: #F7F6F4;
+    --izumo-warm-dark: #F0EFE9;
+    --border: #E0DDC9;
+    --text: #000;
+  }
+  * { box-sizing: border-box; }
+  body {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px;
+    background: var(--izumo-warm);
+    color: var(--text);
+    font-family: "Yu Gothic", "Meiryo", Arial, sans-serif;
+    line-height: 1.6;
+  }
+  h1 {
+    margin: 0 0 20px;
+    padding: 20px 24px;
+    border-top: 5px solid var(--izumo-olive-light);
+    border-radius: 5px;
+    background: var(--izumo-olive);
+    box-shadow: 0 3px 10px rgba(0,0,0,.14);
+    color: #fff;
+    font-size: 1.45em;
+    letter-spacing: .04em;
+  }
+  h2 { margin: 0; color: var(--izumo-olive); font-size: 1.1em; }
+  .panel {
+    margin-bottom: 20px;
+    padding: 20px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+    box-shadow: 0 2px 7px rgba(0,0,0,.06);
+  }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .row:last-child { margin-bottom: 0; }
+  label, .row strong { color: var(--izumo-olive); font-weight: 700; }
+  input[type=text] {
+    width: min(100%, 360px);
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid #B1A887;
+    border-radius: 4px;
+    background: #fff;
+    color: var(--text);
+    font: inherit;
+  }
+  input[type=file] { font: inherit; max-width: 100%; }
+  input[type=text]:focus, textarea:focus, button:focus-visible, a:focus-visible {
+    outline: 3px solid rgba(103,87,29,.28);
+    outline-offset: 2px;
+    border-color: var(--izumo-olive);
+  }
+  textarea {
+    width: 100%;
+    min-height: 90px;
+    padding: 10px;
+    border: 1px solid #B1A887;
+    border-radius: 4px;
+    font: 13px Consolas, "Meiryo", monospace;
+    white-space: pre;
+    overflow: auto;
+  }
+  button {
+    min-height: 40px;
+    padding: 8px 14px;
+    border: 1px solid #B1A887;
+    border-radius: 4px;
+    background: #fff;
+    color: var(--izumo-olive);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    transition: background-color .15s ease, border-color .15s ease;
+  }
+  button:hover:not(:disabled) { border-color: var(--izumo-olive); background: var(--izumo-warm-dark); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { border-color: var(--izumo-olive); background: var(--izumo-olive); color: #fff; }
+  button.primary:hover:not(:disabled) { border-color: var(--izumo-olive-light); background: var(--izumo-olive-light); }
+  .note {
+    margin: 0 0 14px;
+    padding: 9px 12px;
+    border-left: 4px solid #D11313;
+    background: #F5DFDF;
+    color: #A33131;
+    font-size: .92em;
+  }
+  .hint { margin: 8px 0 0; color: #666; font-size: .85em; }
+  #status, #headerInfo, #log {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-left: 4px solid var(--izumo-olive-light);
+    background: var(--izumo-warm-dark);
+    white-space: pre-line;
+  }
+  #log { max-height: 240px; overflow: auto; font: 12.5px Consolas, "Meiryo", monospace; background: #FAFAF7; }
+  .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+  .table-wrap.tall { max-height: 640px; }
+  table { border-collapse: collapse; background: #fff; }
+  th, td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid #EEEDE6;
+    text-align: left;
+    vertical-align: middle;
+    font-size: .85em;
+  }
+  /* 見出し：折り返して、列幅を抑える */
+  th {
+    background: var(--izumo-olive);
+    color: #fff;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    white-space: normal;
+    line-height: 1.3;
+    min-width: 4em;
+    max-width: 8em;
+  }
+  /* データ：1行で表示し、長い文字は省略（マウスを載せると全文） */
+  td {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 14em;
+  }
+  td.num { text-align: right; }
+  td.src { max-width: 24em; }
+  tbody tr:nth-child(even) { background: var(--izumo-warm); }
+  tbody tr:hover { background: var(--izumo-warm-dark); }
+  @media (max-width: 600px) {
+    body { padding: 14px; }
+    h1 { padding: 16px; font-size: 1.25em; }
+    .panel { padding: 14px; }
+    input[type=text] { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<h1>認定農業者名簿 抽出 → Excel作成</h1>
+
+<div class="panel">
+  <p class="note">※ Chrome または Edge で、このHTMLファイルを開いて使用してください。データは外部に送信されません。</p>
+  <div class="row">
+    <button class="primary" id="btnPick">検索フォルダを選定（選定後すぐ抽出）</button>
+    <button id="btnReuse" disabled>前回のフォルダで読込</button>
+    <span id="lastDirName" style="font-size:.85em;color:#555"></span>
+    <button id="btnRun" disabled>再抽出</button>
+    <button id="btnClear">結果をクリア</button>
+  </div>
+  <p class="hint">
+    抽出対象：フォルダ内（サブフォルダを含む）の農業経営改善計画認定申請書（.xlsx / .xlsm / .xls）。<b>1ファイル＝名簿の1行</b>になります。<br>
+    「申請書１」の申請者欄（住所・氏名・フリガナ・生年月日・連絡先・申請日・年間所得・年間労働時間）と、「現在」シートの年齢・営農類型を、項目名の位置から読み取ります。<br>
+    「出典ファイル」列には、選定したフォルダ名からの相対パスが入ります。
+  </p>
+  <div id="status">検索フォルダを選定してください。</div>
+  <div id="log" style="display:none"></div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <h2>出力する見出し（ヘッダー）</h2>
+    <button id="btnHeaderReset">見出しを初期値に戻す</button>
+    <label><input type="checkbox" id="chkSource" checked> 出典ファイル列を付ける</label>
+  </div>
+  <textarea id="headerIn" spellcheck="false"></textarea>
+  <p class="hint">
+    ※ Excelの見出し行をコピーして貼り付けてください（タブ区切りの1行、または1項目ずつ改行区切り）。<br>
+    ※ 見出しを変えると、下の表はすぐ組み替わります（再抽出は不要）。このツールが読み取れる見出し名に一致した列だけが埋まり、それ以外は空欄になります。<br>
+    ※ 過去の出力を読み込むと、見出しはそのファイルの見出し行に合わせて置き換わります（「読込を解除」で元に戻ります）。<br>
+    ※ 読み取れる見出し名：番号（連番）、氏名、かな、住所、生年月日、年齢、営農類型①、所得（現状）、所得（目標）、労働時間（現状）、労働時間（目標）、申請日、電話番号、代表者氏名、代表者フリガナ、法人番号
+  </p>
+  <div id="headerInfo"></div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <h2>過去の出力（空白を埋める元データ）</h2>
+    <label for="fileBase">ファイルから読込</label>
+    <input type="file" id="fileBase" accept=".xlsx,.xlsm,.xls,.csv">
+    <span id="baseName" style="font-size:.9em;color:#333;font-weight:600"></span>
+    <button id="btnBaseClear">読込を解除</button>
+  </div>
+  <textarea id="pasteIn" spellcheck="false" style="min-height:110px" placeholder="過去の出力（Excel）の範囲をコピーして、ここに貼り付け（Ctrl+V）。CSVの内容を貼り付けても可。"></textarea>
+  <p class="hint">
+    ※ 見出し行は自動で探します（タイトル行や集計行が上にあっても可）。見出し行より上の行は、出力の先頭にそのまま付けます。<br>
+    ※ <b>空白の欄だけ</b>を抽出結果で埋めます。値のある欄は変更しません。<br>
+    ※ 氏名で行を対応づけ、同姓同名は生年月日で判定します。一致しない抽出結果は使わず、行は増やしません。
+  </p>
+  <p id="baseInfo" class="hint" style="white-space:pre-line"></p>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <h2>抽出データ（出力内容）</h2>
+  </div>
+  <div class="row">
+    <label for="resFilter">絞り込み</label>
+    <input type="text" id="resFilter" placeholder="氏名・住所・ファイル名などで絞り込み">
+    <button id="btnXlsx" class="primary" disabled>Excel (.xlsx) で保存</button>
+    <button id="btnCsv" disabled>CSV で保存</button>
+  </div>
+  <div class="table-wrap tall">
+    <table id="dataTbl">
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const SUPPORTED_EXT = ['xlsx', 'xlsm', 'xls'];
+const SOURCE_COL = '出典ファイル';
+const isSourceCol = h => keyOf(h) === keyOf(SOURCE_COL);
+
+// ===== 初期の見出し（名簿の列構成）=====
+const DEFAULT_HEADER = [
+  '番号', '認定番号', '地域', '地区', '支部', '役職', '氏名', '住所', 'かな', '生年月日',
+  '年齢', '統合実調類型※', '営農類型①', '営農類型②', '営農類型③', '所得（現状）', '所得（目標）',
+  '労働時間（現状）', '労働時間（目標）', '初回認定日', '再認定日', '認定日（3回目）', '認定日（4回目）',
+  '認定日（5回目）', '認定日（６回目）', '認定日（7回目）', '次回年度', '認定期限', '申請日', '郵便番号',
+  '電話番号', 'メールアドレス', 'ＦＡＸ', '性別', '法人', '協議会', '同意', '人・農地（地区）',
+  '人・農地（時期）', '備考①', '共同申請', 'R08新規', 'R08再認定', '法人種別', '農業生産法人',
+  '年齢（共同除く）', '常時雇用（現状）', '臨時雇用（現状）', '一戸一法人', '農家世帯ID（農地台帳）'
+];
+
+// 見出し行の判定に使う既知の見出し名（照合用キー）
+const KNOWN_KEYS = new Set([...DEFAULT_HEADER, SOURCE_COL].map(h => keyOf(h)));
+
+// ===== 見出し（localStorage）=====
+const HEADER_KEY = 'meiboHeaderText';
+const headerIn = $('headerIn');
+
+function saveHeaderText() {
+  try { localStorage.setItem(HEADER_KEY, headerIn.value); } catch (e) { }
+}
+(function initHeader() {
+  let v = null;
+  try { v = localStorage.getItem(HEADER_KEY); } catch (e) { }
+  headerIn.value = v || DEFAULT_HEADER.join('\t');
+})();
+headerIn.addEventListener('input', () => {
+  saveHeaderText();
+  renderResults();
+});
+$('btnHeaderReset').addEventListener('click', () => {
+  headerIn.value = DEFAULT_HEADER.join('\t');
+  saveHeaderText();
+  renderResults();
+  setStatus('見出しを初期値に戻しました。');
+});
+$('chkSource').addEventListener('change', renderResults);
+
+// ===== 状態 =====
+// results: { file, folder, path, srcHeader, srcMap, rawRows }（1ファイル＝1行）
+let results = [];
+let logLines = [];
+let stats = { targets: 0, hit: 0, skipped: 0, errors: 0 };
+let selectedDirHandle = null;
+let running = false;
+// 過去の出力（空白を埋める元）: { name, from, header, preface, headerRow, rows: [Map] }
+let base = null;
+let prevHeaderText = null;
+let pasteTimer = null;
+
+// ===== ボタン・入力 =====
+$('btnPick').addEventListener('click', selectSearchFolder);
+$('btnReuse').addEventListener('click', reuseSearchFolder);
+$('btnRun').addEventListener('click', runExtract);
+$('btnClear').addEventListener('click', () => {
+  results = [];
+  logLines = [];
+  renderResults();
+  showLog();
+  setStatus('結果をクリアしました。');
+});
+$('resFilter').addEventListener('input', applyDataFilter);
+$('btnXlsx').addEventListener('click', saveXlsx);
+$('btnCsv').addEventListener('click', saveCsv);
+$('btnBaseClear').addEventListener('click', clearBase);
+// 入力欄の値は消さない（ファイル名を表示したままにする）
+$('fileBase').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $('baseName').textContent = `読込中: ${f.name}`;
+  await loadBaseFile(f);
+});
+$('pasteIn').addEventListener('input', () => {
+  clearTimeout(pasteTimer);
+  pasteTimer = setTimeout(applyPaste, 400);
+});
+
+// ===== 前回のフォルダの記憶（IndexedDB）=====
+function openHandleDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('meiboSearchDb', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function withHandleStore(mode, fn) {
+  const db = await openHandleDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', mode);
+      const req = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => resolve(req ? req.result : undefined);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+function saveLastDir(handle) { return withHandleStore('readwrite', s => s.put(handle, 'lastDir')); }
+async function loadLastDir() {
+  try { return (await withHandleStore('readonly', s => s.get('lastDir'))) || null; }
+  catch (e) { return null; }
+}
+async function refreshLastDirUi() {
+  const h = await loadLastDir();
+  $('btnReuse').disabled = !h;
+  $('lastDirName').textContent = h ? `記憶中: ${h.name}` : '';
+  return h;
+}
+refreshLastDirUi();
+
+async function getReusableDir() {
+  const h = await loadLastDir();
+  if (!h) { await refreshLastDirUi(); return null; }
+  try {
+    let perm = await h.queryPermission({ mode: 'read' });
+    if (perm !== 'granted') perm = await h.requestPermission({ mode: 'read' });
+    if (perm !== 'granted') { alert('フォルダへのアクセスが許可されませんでした。'); return null; }
+  } catch (e) {
+    alert('前回のフォルダを開けませんでした: ' + e.message);
+    return null;
+  }
+  return h;
+}
+async function reuseSearchFolder() {
+  const h = await getReusableDir();
+  if (!h) return;
+  selectedDirHandle = h;
+  $('btnRun').disabled = false;
+  await runExtract();
+}
+async function selectSearchFolder() {
+  if (!window.showDirectoryPicker) {
+    alert('このブラウザは非対応です。Chrome か Edge をご利用ください。');
+    return;
+  }
+  try {
+    const lastHandle = await loadLastDir();
+    selectedDirHandle = await window.showDirectoryPicker({ mode: 'read', startIn: lastHandle || 'documents' });
+    await saveLastDir(selectedDirHandle).catch(() => {});
+    await refreshLastDirUi();
+    $('btnRun').disabled = false;
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('フォルダを開けませんでした: ' + e.message);
+    return;
+  }
+  await runExtract();
+}
+
+// ===== 文字列・セルの共通処理 =====
+// 区切り文字を指定できる貼り付け解析（ダブルクォート対応）
+function parseTsv(text, delim = '\t') {
+  const records = [];
+  let row = [];
+  let field = '';
+  let inQuote = false;
+  text = text.replace(/\r\n?/g, '\n');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuote) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuote = false;
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"' && field === '') { inQuote = true; continue; }
+    if (ch === delim) { row.push(field); field = ''; continue; }
+    if (ch === '\n') { row.push(field); records.push(row); row = []; field = ''; continue; }
+    field += ch;
+  }
+  if (field !== '' || row.length) { row.push(field); records.push(row); }
+  return records;
+}
+
+// 1行目からタブかカンマかを判定
+function detectDelim(text) {
+  const line = text.split(/\r?\n/).find(l => l.trim() !== '') || '';
+  if (line.includes('\t')) return '\t';
+  if (line.includes(',')) return ',';
+  return '\t';
+}
+
+// 改行を空白に置換し、先頭のアポストロフィを除去
+function cleanText(s) {
+  return String(s ?? '').replace(/\s*[\r\n]+\s*/g, ' ').replace(/^'/, '').trim();
+}
+
+// 見出しの文字列：前後と途中の余分な空白（全角・半角）を1つにまとめる
+function headerText(s) {
+  return cleanText(s).replace(/\s+/g, ' ');
+}
+
+// 照合用のキー（全角半角・空白の違いを無視）
+function keyOf(s) {
+  return String(s ?? '').normalize('NFKC').replace(/\s+/g, '');
+}
+
+// 生年月日の照合用キー（区切りや桁数の違いを無視して YYYYMMDD に）
+function birthKey(v) {
+  const n = String(v ?? '').normalize('NFKC').match(/\d+/g);
+  if (!n) return '';
+  if (n.length < 3) return n.join('');
+  return n[0] + n[1].padStart(2, '0') + n[2].padStart(2, '0');
+}
+
+const isBlank = v => v === null || v === undefined || String(v).trim() === '';
+
+// 数字だけのセルは数値に（9桁以下のみ。長い番号・先頭0の数字は文字列のまま）
+function toCell(s) {
+  if (typeof s === 'number') return s;
+  const t = cleanText(s);
+  if (t === '') return null;
+  if (/^\d+$/.test(t) && t.length <= 9 && !(t.length > 1 && t[0] === '0')) return Number(t);
+  return t;
+}
+
+// 見出し入力欄の内容を配列にする（1行のタブ区切り、または1項目ずつの改行区切り）
+function parseHeaderInput(text) {
+  const recs = parseTsv(text).filter(r => r.some(c => c.trim() !== ''));
+  if (recs.length === 0) return [];
+  let names;
+  if (recs.length > 1 && recs.every(r => r.length === 1)) {
+    names = recs.map(r => headerText(r[0]));
+  } else {
+    names = recs[0].map(headerText);
+  }
+  while (names.length && names[names.length - 1] === '') names.pop();
+  return names;
+}
+
+function getLiveHeader() {
+  return parseHeaderInput(headerIn.value);
+}
+
+// 元の見出し名 → 列番号（同名は最初の列を採用）
+function buildIndexMap(srcHeader) {
+  const m = new Map();
+  srcHeader.forEach((h, i) => {
+    const k = keyOf(h);
+    if (k && !m.has(k)) m.set(k, i);
+  });
+  return m;
+}
+
+// 画面を更新させるための待ち
+const tick = () => new Promise(res => setTimeout(res, 0));
+
+// ===== 日付 =====
+const pad2 = n => String(n).padStart(2, '0');
+
+// 今日の日付を令和表記にする（例：令和8年11月2日）
+function todayReiwaText() {
+  const d = new Date();
+  return `令和${d.getFullYear() - 2018}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+// 文中の「令和○年○月○日」を今日の日付に置き換える
+function replaceDateText(s) {
+  return String(s).replace(/令和\s*\d+\s*年\s*\d+\s*月\s*\d+\s*日/, todayReiwaText());
+}
+
+// 日付の値を「西暦 年/月/日」に統一する
+// 元号表記（H3.11.25 など）、西暦（g1991.11.25 など）、シリアル値（33567 など）に対応
+function normalizeDateValue(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim().normalize('NFKC');
+  if (s === '') return null;
+
+  // 元号表記：明治・大正・昭和・平成・令和（英字1字も可）
+  const eraBase = { '明治': 1867, 'M': 1867, '大正': 1911, 'T': 1911, '昭和': 1925, 'S': 1925, '平成': 1988, 'H': 1988, '令和': 2018, 'R': 2018 };
+  let m = s.match(/^(明治|大正|昭和|平成|令和|[MTSHR])\s*(\d+)\s*[.\/年\-]\s*(\d+)\s*[.\/月\-]\s*(\d+)/i);
+  if (m) {
+    const key = /^[a-z]$/i.test(m[1]) ? m[1].toUpperCase() : m[1];
+    return `${eraBase[key] + Number(m[2])}/${pad2(m[3])}/${pad2(m[4])}`;
+  }
+
+  // 西暦表記（先頭の g が付くものも含む）
+  m = s.match(/^g?(\d{4})[.\/\-](\d{1,2})[.\/\-](\d{1,2})/);
+  if (m) return `${m[1]}/${pad2(m[2])}/${pad2(m[3])}`;
+
+  // シリアル値（4〜5桁の数字）
+  if (/^\d{4,5}$/.test(s)) {
+    const d = XLSX.SSF.parse_date_code(Number(s));
+    if (d) return `${d.y}/${pad2(d.m)}/${pad2(d.d)}`;
+  }
+
+  return s;
+}
+
+// 元号の開始日（新しい順）。西暦の "YYYY/MM/DD" 文字列で比べる
+const ERAS = [
+  { code: 'R', from: '2019/05/01', year0: 2018 },
+  { code: 'H', from: '1989/01/08', year0: 1988 },
+  { code: 'S', from: '1926/12/25', year0: 1925 },
+  { code: 'T', from: '1912/07/30', year0: 1911 },
+  { code: 'M', from: '1868/01/25', year0: 1867 }
+];
+
+// 西暦 "YYYY/MM/DD" を省略和暦（例：H3.11.25、S50.4.8）に変換する
+// 変換できない値（西暦の形でない文字など）はそのまま返す
+function toShortWareki(western) {
+  const s = String(western ?? '');
+  const m = s.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (!m) return western;
+  const era = ERAS.find(e => s >= e.from);
+  if (!era) return western;
+  return `${era.code}${Number(m[1]) - era.year0}.${Number(m[2])}.${Number(m[3])}`;
+}
+
+// ===== 抽出ロジック開始（申請書の「項目名の位置」から値を読む）=====
+const UNITS = new Set(['千円', '円', '万円', '時間', 'h', '人', 'a', 'kg', '%']);
+
+// シートのセルを一覧にする（行→列の順）
+function sheetIndex(ws) {
+  const cells = [];
+  for (const addr in ws) {
+    if (addr[0] === '!') continue;
+    const c = ws[addr];
+    if (!c || c.v === undefined || c.v === null || c.v === '') continue;
+    const p = XLSX.utils.decode_cell(addr);
+    const text = String(c.w ?? c.v);
+    cells.push({ r: p.r, c: p.c, v: c.v, t: c.t, text, key: keyOf(text) });
+  }
+  cells.sort((a, b) => a.r - b.r || a.c - b.c);
+  const map = new Map(cells.map(x => [x.r + ',' + x.c, x]));
+  return { cells, map, merges: ws['!merges'] || [] };
+}
+
+// セルを含む結合範囲（無ければ1セル）
+function mergeOf(idx, r, c) {
+  const m = idx.merges.find(m => m.s.r <= r && r <= m.e.r && m.s.c <= c && c <= m.e.c);
+  return m || { s: { r, c }, e: { r, c } };
+}
+
+// 項目名の右隣のセル（結合セルの右端の次）
+function valueRight(idx, lab) {
+  if (!lab) return null;
+  const m = mergeOf(idx, lab.r, lab.c);
+  return idx.map.get(lab.r + ',' + (m.e.c + 1)) || null;
+}
+
+// 項目名の真下のセル
+function valueBelow(idx, lab) {
+  if (!lab) return null;
+  const m = mergeOf(idx, lab.r, lab.c);
+  return idx.map.get((m.e.r + 1) + ',' + lab.c) || null;
+}
+
+const numOf = x => {
+  if (x.t === 'n') return x.v;
+  return /^-?\d+(\.\d+)?$/.test(x.key) ? Number(x.key) : null;
+};
+
+// 項目名の右に並ぶ数値（単位の文字は飛ばし、別の項目名で止まる）
+function numsRight(idx, lab) {
+  if (!lab) return [];
+  const m = mergeOf(idx, lab.r, lab.c);
+  const out = [];
+  for (const x of idx.cells) {
+    if (x.r !== lab.r || x.c <= m.e.c) continue;
+    const n = numOf(x);
+    if (n !== null) { out.push(n); continue; }
+    if (UNITS.has(x.key)) continue;
+    break;
+  }
+  return out;
+}
+
+const textOf = x => {
+  if (!x) return null;
+  const t = cleanText(x.text);
+  return t === '' ? null : t;
+};
+
+// 日付：数値ならシリアル値として年月日に、文字ならそのまま
+function dateText(x) {
+  if (!x) return null;
+  if (x.t === 'n' && x.v >= 1 && x.v < 80000) {
+    const d = XLSX.SSF.parse_date_code(x.v);
+    if (d) return `${d.y}/${pad2(d.m)}/${pad2(d.d)}`;
+  }
+  return textOf(x);
+}
+
+// フリガナ → 全角ひらがな（半角カナ・カタカナ・英数の全半角を整える）
+function toHiragana(s) {
+  if (s === null || s === undefined) return null;
+  const t = String(s).normalize('NFKC')
+    .replace(/[\u30A1-\u30F6]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60))
+    .replace(/\s+/g, '\u3000')
+    .trim();
+  return t === '' ? null : t;
+}
+
+// 半角 → 全角（英数・記号・空白・半角カナ）
+function toFullWidth(s) {
+  if (s === null || s === undefined) return null;
+  return String(s)
+    .replace(/[\uFF61-\uFF9F]+/g, m => m.normalize('NFKC'))
+    .replace(/[!-~]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0))
+    .replace(/ /g, '\u3000');
+}
+
+const round1 = n => (n === undefined || n === null) ? null : Math.round(n * 10) / 10;
+
+// 申請日：「令和 ○ 年 ○ 月 ○ 日」の数字を拾って西暦に
+function applyDate(idx) {
+  const lab = idx.cells.find(x => x.key === '令和' && x.r < 12);
+  if (!lab) return null;
+  const nums = idx.cells
+    .filter(x => x.r === lab.r && x.c > lab.c)
+    .map(numOf).filter(n => n !== null);
+  if (nums.length < 3) return null;
+  return `${2018 + nums[0]}/${pad2(nums[1])}/${pad2(nums[2])}`;
+}
+
+function pickSheet(wb, test) {
+  const n = wb.SheetNames.find(s => test(keyOf(s)));
+  return n ? wb.Sheets[n] : null;
+}
+
+// 1ブック → 名簿の1行（申請書でなければ null）
+function extractRecord(wb) {
+  const ws1 = pickSheet(wb, k => k === '申請書1') || pickSheet(wb, k => k.includes('申請書1'));
+  if (!ws1) return null;
+  const i1 = sheetIndex(ws1);
+  const all = test => i1.cells.filter(x => test(x.key));
+  const first = test => all(test)[0] || null;
+
+  const rec = {};
+  rec['氏名'] = textOf(valueRight(i1, first(k => k.startsWith('個人・法人名') || k === '法人名')));
+  const kana = all(k => k === 'フリガナ');
+  rec['かな'] = toHiragana(textOf(valueRight(i1, kana[0])));
+  rec['住所'] = toFullWidth(textOf(valueRight(i1, first(k => k === '住所' || k.includes('所在地')))));
+  rec['生年月日'] = dateText(valueRight(i1, first(k => k.startsWith('生年月日'))));
+  rec['申請日'] = applyDate(i1);
+  rec['電話番号'] = textOf(valueRight(i1, first(k => k === '連絡先')));
+  rec['代表者氏名'] = textOf(valueRight(i1, first(k => k.startsWith('代表者氏名'))));
+  rec['代表者フリガナ'] = toHiragana(textOf(valueRight(i1, kana[1])));
+  rec['法人番号'] = textOf(valueRight(i1, first(k => k === '法人番号')));
+
+  const inc = numsRight(i1, first(k => k === '年間所得'));
+  rec['所得（現状）'] = round1(inc[0]);
+  rec['所得（目標）'] = round1(inc[1]);
+  const wt = numsRight(i1, first(k => k === '年間労働時間'));
+  rec['労働時間（現状）'] = round1(wt[0]);
+  rec['労働時間（目標）'] = round1(wt[1]);
+
+  // 「現在」シート：見出しの真下に 氏名・年齢・営農類型
+  const ws2 = pickSheet(wb, k => k === '現在') || pickSheet(wb, k => k.includes('現在'));
+  if (ws2) {
+    const i2 = sheetIndex(ws2);
+    const f2 = test => i2.cells.find(x => test(x.key)) || null;
+    if (!rec['氏名']) rec['氏名'] = textOf(valueBelow(i2, f2(k => k === '氏名')));
+    const age = valueBelow(i2, f2(k => k === '年齢'));
+    rec['年齢'] = age ? (numOf(age) ?? textOf(age)) : null;
+    rec['営農類型①'] = textOf(valueBelow(i2, f2(k => k.startsWith('営農類型'))));
+  }
+
+  if (!rec['氏名'] && !rec['住所'] && !rec['申請日']) return null;
+  return rec;
+}
+// ===== 抽出ロジック終了 =====
+
+// ===== 過去の出力の読み込み（表示上の文字ではなく値を使う）=====
+// 日付（元号表記を含む）は西暦の 年/月/日 に、長い数字は文字として読む
+function cellToText(cell) {
+  if (!cell || cell.v === undefined || cell.v === null || cell.v === '') return '';
+  if (cell.t === 'n') {
+    const isDate = cell.z && (XLSX.SSF.is_date(cell.z) || /e|g/i.test(cell.z));
+    if (isDate) {
+      const d = XLSX.SSF.parse_date_code(cell.v);
+      if (d) return `${d.y}/${pad2(d.m)}/${pad2(d.d)}`;
+    }
+    return String(cell.v);
+  }
+  return String(cell.v);
+}
+
+// シートを格子（行×列の文字の二次元配列）にする
+function sheetToGrid(ws) {
+  if (!ws || !ws['!ref']) return [];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const grid = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const line = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      line.push(cellToText(ws[XLSX.utils.encode_cell({ r, c })]));
+    }
+    grid.push(line);
+  }
+  return grid;
+}
+
+async function loadBaseFile(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    let grid;
+    if (/\.csv$/i.test(file.name)) {
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+      catch (e) { text = new TextDecoder('shift_jis').decode(buf); }
+      grid = parseTsv(text.replace(/^\uFEFF/, ''), detectDelim(text));
+    } else {
+      const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+      const sheetName = wb.SheetNames.find(s => keyOf(s).includes('名簿')) || wb.SheetNames[0];
+      grid = sheetToGrid(wb.Sheets[sheetName]);
+    }
+    $('pasteIn').value = '';
+    setBase(file.name, grid, 'file');
+  } catch (e) {
+    $('baseName').textContent = '';
+    setStatus(`過去の出力を読み込めませんでした（${file.name}）: ${e.message}`);
+  }
+}
+
+function applyPaste() {
+  const text = $('pasteIn').value;
+  if (text.trim() === '') {
+    if (base && base.from === 'paste') clearBase();
+    return;
+  }
+  const clean = text.replace(/^\uFEFF/, '');
+  setBase('貼り付けデータ', parseTsv(clean, detectDelim(clean)), 'paste');
+}
+
+// 見出し行の自動検出：「氏名」または「番号」を含む行のうち、既知の見出し名が最も多い行（先頭60行まで）
+// 見つからなければ -1
+function findHeaderIndex(grid) {
+  const limit = Math.min(grid.length, 60);
+  let best = -1;
+  let bestScore = 0;
+  for (let i = 0; i < limit; i++) {
+    const cells = (grid[i] || []).map(c => keyOf(cleanText(c)));
+    const hasKey = cells.includes(keyOf('氏名')) || cells.includes(keyOf('番号'));
+    if (!hasKey) continue;
+    const score = cells.filter(k => KNOWN_KEYS.has(k)).length;
+    if (score > bestScore) { best = i; bestScore = score; }
+  }
+  return best;
+}
+
+// 見出し行より下のデータを基に、過去の出力を保持する
+// 見出し行から始まり、データの後の最初の空行で止める（その下の別表は読まない）
+// 見出し行より上の非空行は「前書き」として保持し、出力の先頭に付ける
+// 見出しに「日」または「期限」を含む列は、日付として西暦に統一する
+function setBase(name, grid, from) {
+  const start = findHeaderIndex(grid);
+  if (start < 0) {
+    setStatus(`過去の出力「${name}」：見出し行が見つかりませんでした。`);
+    return false;
+  }
+
+  const preface = grid.slice(0, start)
+    .filter(r => (r || []).some(c => String(c ?? '').trim() !== ''))
+    .map(r => {
+      const cells = r.map(c => cleanText(c));
+      while (cells.length && cells[cells.length - 1] === '') cells.pop();
+      return cells;
+    });
+
+  const recs = [];
+  for (const r of grid.slice(start)) {
+    const blank = !(r || []).some(c => String(c ?? '').trim() !== '');
+    if (blank) {
+      if (recs.length > 1) break;
+      continue;
+    }
+    recs.push(r);
+  }
+  if (recs.length < 2) {
+    setStatus(`過去の出力「${name}」：見出し行の下にデータがありません。`);
+    return false;
+  }
+
+  const header = recs[0].map(c => headerText(c));
+  while (header.length && header[header.length - 1] === '') header.pop();
+  if (header.length === 0) {
+    setStatus(`過去の出力「${name}」：見出し行が空です。`);
+    return false;
+  }
+
+  // 日付の列（見出しに「日」または「期限」を含む列）
+  const dateCols = new Set();
+  header.forEach((h, i) => { if (/日|期限/.test(h)) dateCols.add(i); });
+
+  if (base === null) prevHeaderText = headerIn.value;
+  base = {
+    name,
+    from,
+    header,
+    preface,
+    headerRow: start + 1,
+    rows: recs.slice(1).map(r => {
+      const m = new Map();
+      header.forEach((h, i) => {
+        const k = keyOf(h);
+        if (!k || m.has(k)) return;
+        const raw = r[i] ?? null;
+        m.set(k, dateCols.has(i) ? normalizeDateValue(raw) : raw);
+      });
+      return m;
+    })
+  };
+  headerIn.value = header.join('\t');
+  saveHeaderText();
+  $('baseName').textContent = from === 'file' ? `読込中のファイル: ${name}` : '';
+  renderResults();
+  setStatus(
+    `過去の出力「${name}」を読み込みました。\n` +
+    `見出し行: ${base.headerRow} 行目／データ ${base.rows.length} 行\n` +
+    `見出しはこのファイルの見出し行に合わせました。`
+  );
+  return true;
+}
+
+function clearBase() {
+  base = null;
+  clearTimeout(pasteTimer);
+  $('pasteIn').value = '';
+  $('fileBase').value = '';
+  $('baseName').textContent = '';
+  if (prevHeaderText !== null) {
+    headerIn.value = prevHeaderText;
+    saveHeaderText();
+  }
+  prevHeaderText = null;
+  renderResults();
+  setStatus('過去の出力の読込を解除しました。見出しは元に戻しました。');
+}
+
+// ===== 出力行の組み立て =====
+// 過去の出力がある場合：名簿の行の空白だけ抽出結果で埋める（行は増やさない）
+// ない場合：抽出結果をそのまま並べる
+
+// 名簿の行かどうか：番号が数字の行、または認定番号と生年月日の両方がある行
+function isPersonRow(dict) {
+  const num = String(dict.get(keyOf('番号')) ?? '').trim();
+  if (/^\d+$/.test(num)) return true;
+  const cert = String(dict.get(keyOf('認定番号')) ?? '').trim();
+  const birth = String(dict.get(keyOf('生年月日')) ?? '').trim();
+  return cert !== '' && birth !== '';
+}
+
+// 現在の見出しに従って、1ファイル分のデータ行を並べ直す（無い列は null）
+// 日付の列（見出しに「日」または「期限」を含む列）は省略和暦で出す
+function mapRows(r, header) {
+  const values = r.rawRows.map(row => header.map(h => {
+    if (h === '') return null;
+    if (isSourceCol(h)) return r.path;
+    const i = r.srcMap.get(keyOf(h));
+    if (i === undefined) return null;
+    if (/日|期限/.test(h)) return toCell(toShortWareki(normalizeDateValue(row[i])));
+    return toCell(row[i]);
+  }));
+  const missing = header.filter(h => h !== '' && !isSourceCol(h) && !r.srcMap.has(keyOf(h)));
+  return { values, missing };
+}
+
+function buildBody(header) {
+  if (!base) {
+    return {
+      rows: results.flatMap(r => mapRows(r, header).values.map(vals => ({ vals, src: r.path }))),
+      info: null
+    };
+  }
+
+  const iNum = header.findIndex(h => keyOf(h) === '番号');
+
+  // 日付の列（見出しに「日」または「期限」を含む列）
+  const dateIdx = new Set();
+  header.forEach((h, i) => { if (/日|期限/.test(h)) dateIdx.add(i); });
+
+  const exRecs = results.map(r => {
+    const g = key => {
+      const i = r.srcMap.get(keyOf(key));
+      return i === undefined ? '' : r.rawRows[0][i];
+    };
+    return {
+      vals: mapRows(r, header).values[0],
+      path: r.path,
+      name: keyOf(g('氏名')),
+      birth: birthKey(g('生年月日')),
+      used: false
+    };
+  });
+
+  const findMatch = (name, birth) => {
+    if (!name) return null;
+    const cand = exRecs.filter(e => !e.used && e.name === name);
+    if (birth) {
+      const same = cand.find(e => e.birth === birth);
+      if (same) return same;
+    }
+    if (cand.length === 1 && (!birth || !cand[0].birth)) return cand[0];
+    return null;
+  };
+
+  const info = { filled: 0, matched: 0, unmatched: 0 };
+  const rows = [];
+
+  // 過去の出力の名簿行だけを対象にする（集計表・注釈は除外。行は増やさない）
+  const personRows = base.rows.filter(isPersonRow);
+
+  personRows.forEach(dict => {
+    const vals = header.map((h, j) => {
+      if (h === '') return null;
+      const v = dict.get(keyOf(h));
+      if (v === undefined) return null;
+      // 日付の列は西暦に統一してから、省略和暦で出力する
+      if (dateIdx.has(j)) return toCell(toShortWareki(normalizeDateValue(v)));
+      return toCell(v);
+    });
+
+    const m = findMatch(keyOf(dict.get(keyOf('氏名'))), birthKey(dict.get(keyOf('生年月日'))));
+    let src = '';
+    if (m) {
+      m.used = true;
+      info.matched++;
+      src = m.path;
+      header.forEach((h, j) => {
+        if (h === '' || j === iNum) return;
+        if (isBlank(vals[j]) && !isBlank(m.vals[j])) {
+          vals[j] = m.vals[j];
+          info.filled++;
+        }
+      });
+    } else {
+      info.unmatched++;
+    }
+    rows.push({ vals, src });
+  });
+
+  return { rows, info };
+}
+
+// ===== 件数（出力される名簿の行から数える）=====
+// 人数＝行数、経営体数＝人数−共同申請（補）
+// 地域：「地域」列が斐川を含む＝斐川地域、それ以外＝旧出雲市地域
+function countsOfRows(header, rows) {
+  const iArea = header.findIndex(h => keyOf(h) === '地域');
+  const iKyodo = header.findIndex(h => keyOf(h) === '共同申請');
+  const c = {
+    total: 0,
+    keiei: 0,
+    izumo: { n: 0, k: 0 },
+    hikawa: { n: 0, k: 0 }
+  };
+  rows.forEach(o => {
+    const area = (iArea >= 0 && keyOf(o.vals[iArea]).includes('斐川')) ? 'hikawa' : 'izumo';
+    const isHo = iKyodo >= 0 && /補/.test(String(o.vals[iKyodo] ?? ''));
+    c.total++;
+    c[area].n++;
+    if (!isHo) {
+      c.keiei++;
+      c[area].k++;
+    }
+  });
+  return c;
+}
+
+// タイトル行（日付と件数を含む）
+function titleText(c) {
+  return `認定農業者名簿（${todayReiwaText()}現在）　${c.total}名／${c.keiei}経営体 (うち旧出雲市地域${c.izumo.n}名/${c.izumo.k}経営体、斐川地域${c.hikawa.n}名/${c.hikawa.k}経営体）`;
+}
+
+// ===== 抽出処理 =====
+async function runExtract() {
+  if (!selectedDirHandle) {
+    alert('先に「検索フォルダを選定」してください。');
+    return;
+  }
+  const header = getLiveHeader();
+  if (header.length === 0) {
+    alert('見出し（ヘッダー）を入力してください。');
+    return;
+  }
+  if (running) return;
+  running = true;
+
+  results = [];
+  logLines = [];
+  stats = { targets: 0, hit: 0, skipped: 0, errors: 0 };
+  showLog();
+  try {
+    setStatus('抽出中...');
+    await tick();
+    await scanDir(selectedDirHandle, '');
+  } catch (e) {
+    stats.errors++;
+    logLines.push(`［エラー］抽出が中断されました　${e.message}`);
+  } finally {
+    running = false;
+  }
+  showLog();
+  renderResults();
+
+  const missingAll = [...new Set(results.flatMap(r => mapRows(r, header).missing))];
+
+  let hint = '';
+  if (stats.targets === 0) {
+    hint = '\n※ 対象のExcelファイルが見つかりませんでした。フォルダを選び直してください。';
+  } else if (stats.hit === 0) {
+    hint = '\n※ 「申請書１」シートを持つ申請書が見つかりませんでした。下のログでシート名を確認してください。';
+  }
+
+  setStatus(
+    `対象ファイル数: ${stats.targets} / 名簿の行にできた申請書: ${stats.hit}\n` +
+    `申請書として読めなかった: ${stats.skipped} / 開けなかった: ${stats.errors}\n` +
+    (missingAll.length
+      ? `このツールが読み取らない（空欄になる）見出し: ${missingAll.join('、')}`
+      : '見出しはすべて読み取り項目と対応しました。') + hint
+  );
+}
+
+// フォルダを再帰的に巡回（フォルダ単位でエラーを拾う）
+async function scanDir(dirHandle, relPath) {
+  try {
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'directory') {
+        const sub = relPath ? `${relPath}\\${entry.name}` : entry.name;
+        await scanDir(entry, sub);
+      } else {
+        const ext = entry.name.split('.').pop().toLowerCase();
+        if (entry.name.startsWith('~$') || !SUPPORTED_EXT.includes(ext)) continue;
+        await extractFile(entry, relPath);
+      }
+    }
+  } catch (e) {
+    stats.errors++;
+    logLines.push(`［フォルダエラー］${relPath || dirHandle.name}　${e.message}`);
+    showLog();
+  }
+}
+
+async function extractFile(fh, relFolder) {
+  stats.targets++;
+  const label = `${relFolder ? relFolder + '\\' : ''}${fh.name}`;
+  setStatus(`抽出中... ${stats.targets} 件目: ${fh.name}`);
+  await tick();
+
+  try {
+    const buf = await (await fh.getFile()).arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const rec = extractRecord(wb);
+
+    if (!rec) {
+      stats.skipped++;
+      logLines.push(`［申請書なし］${label}　シート: ${wb.SheetNames.join(' / ') || 'なし'}`);
+      return;
+    }
+
+    const row = Object.assign({ '番号': results.length + 1 }, rec);
+    const srcHeader = Object.keys(row);
+    const rootName = selectedDirHandle ? selectedDirHandle.name : '';
+    results.push({
+      file: fh.name,
+      folder: relFolder || '(選択フォルダ直下)',
+      path: [rootName, relFolder, fh.name].filter(Boolean).join('\\'),
+      srcHeader,
+      srcMap: buildIndexMap(srcHeader),
+      rawRows: [srcHeader.map(k => row[k])]
+    });
+    stats.hit++;
+    logLines.push(`［OK］${label}　${rec['氏名'] || '(氏名なし)'}`);
+  } catch (e) {
+    stats.errors++;
+    logLines.push(`［エラー］${label}　${e.message}`);
+  }
+  showLog();
+}
+
+// ===== 表示 =====
+function needSourceCol(header) {
+  return $('chkSource').checked && !header.some(isSourceCol);
+}
+
+function renderResults() {
+  const header = getLiveHeader();
+  const body = buildBody(header);
+  renderDataTable(header, body);
+  const blank = header.filter(h => h === '').length;
+  $('headerInfo').textContent = `見出し: ${header.length} 列（うち名前のない列 ${blank}）`;
+
+  let baseText = '';
+  if (body.info) {
+    const iBirth = header.findIndex(h => keyOf(h) === '生年月日');
+    const sample = (iBirth >= 0 && body.rows[0]) ? body.rows[0].vals[iBirth] : '（生年月日の列なし）';
+    baseText =
+      `読込元: ${base.name}　空白を埋めた欄 ${body.info.filled} 件／一致 ${body.info.matched} 行／一致しなかった行 ${body.info.unmatched} 行（行は増やしません）\n` +
+      `生年月日の例（出力される値）: ${sample}`;
+  }
+  $('baseInfo').textContent = baseText;
+  updateButtons(header, body);
+}
+
+function showLog() {
+  const el = $('log');
+  el.textContent = logLines.join('\n');
+  el.style.display = logLines.length ? '' : 'none';
+}
+
+// 下段：出力内容（現在の見出しに従って組んだ表）
+// セルは省略表示（マウスを載せると全文）。数値は右寄せ
+function renderDataTable(header, body) {
+  const thead = document.querySelector('#dataTbl thead');
+  const tbody = document.querySelector('#dataTbl tbody');
+  thead.textContent = '';
+  tbody.textContent = '';
+
+  const withSource = needSourceCol(header);
+  const heads = withSource ? [...header, SOURCE_COL] : header;
+
+  const hr = document.createElement('tr');
+  heads.forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.title = h;
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+
+  const frag = document.createDocumentFragment();
+  body.rows.forEach(o => {
+    const tr = document.createElement('tr');
+    const cells = withSource ? [...o.vals, o.src] : o.vals;
+    cells.forEach((c, idx) => {
+      const td = document.createElement('td');
+      const text = (c === null || c === undefined) ? '' : String(c);
+      td.textContent = text;
+      td.title = text;
+      if (typeof c === 'number') td.className = 'num';
+      if (withSource && idx === heads.length - 1) td.className = 'src';
+      tr.appendChild(td);
+    });
+    frag.appendChild(tr);
+  });
+  tbody.appendChild(frag);
+
+  applyDataFilter();
+}
+
+function applyDataFilter() {
+  const q = $('resFilter').value.trim().toLowerCase();
+  Array.from(document.querySelector('#dataTbl tbody').rows).forEach(tr => {
+    tr.style.display = (!q || tr.textContent.toLowerCase().includes(q)) ? '' : 'none';
+  });
+}
+
+function updateButtons(header, body) {
+  const ok = header.length > 0 && body.rows.length > 0;
+  $('btnXlsx').disabled = !ok;
+  $('btnCsv').disabled = !ok;
+}
+
+// ===== 出力用の二次元配列 =====
+// 前書き（タイトルは名簿の行から数え直し、日付は今日に更新）＋見出し行＋データ行
+function buildAoa(header) {
+  const withSource = needSourceCol(header);
+  const head = header.map(h => (h === '' ? null : h));
+  if (withSource) head.push(SOURCE_COL);
+  const body = buildBody(header);
+
+  const aoa = [];
+  if (base && base.preface) {
+    const counts = countsOfRows(header, body.rows);
+    base.preface.forEach(cells => {
+      if (cells.some(v => v.includes('認定農業者名簿'))) {
+        aoa.push([titleText(counts)]);
+      } else {
+        aoa.push(cells.map(v => toCell(replaceDateText(v))));
+      }
+    });
+  }
+  aoa.push(head);
+  body.rows.forEach(o => aoa.push(withSource ? [...o.vals, o.src] : o.vals));
+  return aoa;
+}
+
+// ===== Excel (.xlsx) 保存（ExcelJS：前書きは太字、見出しと表に罫線）=====
+async function saveXlsx() {
+  const header = getLiveHeader();
+  if (header.length === 0) return;
+  const aoa = buildAoa(header);
+  if (aoa.length <= 1) return;
+  if (typeof ExcelJS === 'undefined') {
+    setStatus('Excel作成用のライブラリを読み込めませんでした。インターネット接続を確認してください。');
+    return;
+  }
+
+  // 前書き（タイトルなど）の行数。見出し行はその次の行
+  const prefaceCount = (base && base.preface) ? base.preface.length : 0;
+  const headRow = prefaceCount + 1;   // 見出し行（1始まり）
+  const lastRow = aoa.length;
+  const width = Math.max(...aoa.map(r => r.length));
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('認定農業者名簿');
+  aoa.forEach(r => ws.addRow(r.map(v => (v === undefined ? null : v))));
+
+  const thin = { style: 'thin', color: { argb: 'FF000000' } };
+  const borderAll = { top: thin, left: thin, bottom: thin, right: thin };
+
+  for (let r = 1; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    for (let c = 1; c <= width; c++) {
+      const cell = row.getCell(c);
+      if (r <= prefaceCount) {
+        // 前書き（タイトル）：太字
+        cell.font = { bold: true, size: 12 };
+      } else if (r === headRow) {
+        // 見出し行：太字・背景色・罫線
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF67571D' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = borderAll;
+      } else {
+        // データ行：罫線
+        cell.border = borderAll;
+      }
+    }
+  }
+
+  // 列幅（前書きの長い文章は幅の計算から除外）
+  for (let c = 1; c <= width; c++) {
+    let maxLen = 6;
+    for (let r = headRow - 1; r < lastRow; r++) {
+      const v = aoa[r][c - 1];
+      if (v !== null && v !== undefined) maxLen = Math.max(maxLen, String(v).length);
+    }
+    ws.getColumn(c).width = Math.min(30, maxLen + 2);
+  }
+
+  // 見出し行を固定
+  ws.views = [{ state: 'frozen', ySplit: headRow }];
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const fileName = `認定農業者名簿_抽出_${stamp()}.xlsx`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  setStatus(`Excelを保存しました: ${fileName}\nデータ ${lastRow - headRow} 行 / 列数 ${width}`);
+}
+
+// ===== CSV 保存（BOM付きUTF-8。太字・罫線は CSV では付きません）=====
+function saveCsv() {
+  const header = getLiveHeader();
+  if (header.length === 0) return;
+  const aoa = buildAoa(header);
+  if (aoa.length <= 1) return;
+  const q = v => (v === null || v === undefined) ? '' : '"' + String(v).replace(/"/g, '""') + '"';
+  const lines = aoa.map(r => r.map(q).join(','));
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const fileName = `認定農業者名簿_抽出_${stamp()}.csv`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus(`CSVを保存しました: ${fileName}\nデータ ${aoa.length - 1} 行`);
+}
+
+// ===== ユーティリティ =====
+function stamp() {
+  const now = new Date();
+  return `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}_` +
+         `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+}
+
+function setStatus(msg) {
+  $('status').textContent = msg;
+}
+
+// 初期表示
+renderResults();
+</script>
+</body>
+</html>
