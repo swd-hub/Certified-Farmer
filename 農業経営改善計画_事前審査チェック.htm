@@ -1023,7 +1023,7 @@
       // 項目ごとに1行（改行区切り）、各行は「項目；現状；目標・措置」
       consistency(rule, ctx) {
         // 結果表に出す文言（チェック票の文言に関わらずこの文にする）
-        const CONS_TEXT = "項目、現状、目標・措置の記載内容が生産方式の合理化であるか確認する。";
+        const CONS_TEXT = "項目、現状、目標・措置の記載内容が生産方式の合理化である。";
         const t3 = read3Table(ctx, rule);
         if (t3.error) { ctx.rep.push(manualRow(ctx, rule.top, CONS_TEXT, t3.error)); return; }
         ctx.rep.push([t3.ws.name, t3.anchorAddr, "手動確認", CONS_TEXT,
