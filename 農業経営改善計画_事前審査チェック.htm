@@ -207,7 +207,7 @@
         return [{ kind: "staffMatch", sheet: sheetCR, idx }];
       if (top === "（別紙）" && /補助事業を要望する場合の理由が③/.test(t))
         return [{ kind: "subsidyReason3", sheet: ["申請書３"] }];
-      if (top === "③" && /一貫性/.test(t))
+      if (top === "③" && /一貫性|生産方式の合理化であるか/.test(t))
         return [{ kind: "consistency", sheet: ["申請書２"] }];
       if (top === "③" && /面積増減の理由/.test(t))
         return [{ kind: "reasonArea", sheet: ["申請書２"] }];
@@ -216,13 +216,13 @@
         return [{ kind: "skip" }];
       if (top === "（別紙）" && /重複記載がない/.test(t))
         return [{ kind: "planDup", sheet: APP_SHEETS }];
-      if (top === "【別紙】" && /補助事業を要望する機械/.test(t))
+      if (top === "【別紙】" && /補助事業を要望する機械|機械・施設名に加わっている/.test(t))
         return [{ kind: "ownSubsidy", sheet: APP_SHEETS }];
 
       if (isCR && /主たる従事者の労働時間/.test(t) && /一致する/.test(t))
         return [{ kind: "match", sheet: [top === "【現在】" ? "現在" : "目標"], refIndex: idx }];
 
-      if (/作付体系/.test(t) && /家族経営では/.test(t))
+      if (/作付体系/.test(t))
         // 家族経営（法人経営でない場合）に限り、図がなければ「加える」と案内する。法人経営は判定しない
         return [{ kind: "presence", sheet: ["現在", "目標"], label: "作付体系", when: "family", present: true }];
 
