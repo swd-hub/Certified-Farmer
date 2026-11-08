@@ -538,7 +538,7 @@
     // targetC を指定した場合：その列のセル（例：措置、経営面積合計）が対象になり、修正欄に現在の内容が入る。
     // 指定しない場合：右端の【要記入】メモ欄が対象（修正欄は空）。
     // どちらの場合も、右端に【要記入】メモを書いて目印にする。
-    function flagCell(ws, rep, r, text, targetC = null, lockText = null) {
+    function flagCell(ws, rep, r, text, targetC = null, lockText = null, hideMemo = false, eraseWord = false) {
       if (!noteCol.has(ws.name)) noteCol.set(ws.name, ws.columnCount + 2);
       let col = noteCol.get(ws.name);
       while (getVal(ws.getCell(r, col)) !== null) col++;
@@ -548,8 +548,15 @@
 
       if (lockText) {
         // 手修正させない行：修正欄は入力不可にして、案内文だけを表示する（セルは書き換えない）
-        const where = targetC ? `${ws.getCell(r, targetC).address}（メモ: ${memo.address}）` : memo.address;
+        const where = targetC ? (hideMemo ? ws.getCell(r, targetC).address : `${ws.getCell(r, targetC).address}（メモ: ${memo.address}）`) : memo.address;
         rep.push([ws.name, where, "要記入", text, null, lockText]);
+      } else if (targetC && eraseWord) {
+        // 自動で消去できる行：修正欄に「消去」と表示し、そのままダウンロードすると対象セルを空にする
+        const tcell = ws.getCell(r, targetC);
+        const orig = getVal(tcell);
+        const origText = orig === null ? "" : String(orig);
+        const target = { ws: ws.name, r, c: targetC, orig: origText, numeric: false, erase: true };
+        rep.push([ws.name, tcell.address, "要記入", text, target, "消去"]);
       } else if (targetC) {
         const tcell = ws.getCell(r, targetC);
         const orig = getVal(tcell);
@@ -1452,7 +1459,8 @@
 
               if (ctx.shapesOk) {
                 flagCell(ws, ctx.rep, p.r,
-                  `「${name}」の${missing.join("・")}に○（文字・図形）が見つからないためチェックが付きません`);
+                  `「${name}」の${missing.join("・")}に○（文字・図形）が見つからないためチェックが付きません`,
+                  p.c, "エクセル様式に〇を付ける。", true);
               } else {
                 ctx.rep.push([ws.name, addr, "手動確認",
                   `「${name}」の○（${missing.join("・")}）を図形を含めて目視で確認してください（図形の読み取りに失敗）`, null, ""]);
@@ -2054,11 +2062,11 @@
         const names = rowNames(app2, rg);
         const planCells = allValues(plan)
           .filter((x) => toNum(x.v) === null && !isNote(x.v))
-          .map((x) => ({ r: x.r, n: norm(x.v) }));
+          .map((x) => ({ r: x.r, c: x.c, n: norm(x.v) }));
         for (const nm of names)
           for (const p of planCells)
             if (p.n.includes(nm.n))
-              flagCell(plan, ctx.rep, p.r, `「${nm.n}」は②（３）イに記載済みのため、取得計画で重複記載しないでください`);
+              flagCell(plan, ctx.rep, p.r, `「${nm.n}」は②（３）イに記載済みのため、取得計画で重複記載しないでください`, p.c, null, true, true);
       },
 
       // 申請書３（別紙）取得計画の農業用機械等の名称が、【別紙】機械・施設所有状況の機械・施設名に加わっているか
@@ -2673,6 +2681,11 @@
           if (t.orig !== undefined) {
             // 既存の内容があるセル（措置・経営面積合計など）：内容が変わった場合だけ書き換える
             if (val === t.orig) continue;
+            if (t.erase && val.trim() === "消去") {            // 「消去」のまま：対象セルを空にする
+              const wsE = OUT_WB.getWorksheet(t.ws);
+              if (wsE) wsE.getCell(t.r, t.c).value = null;
+              continue;
+            }
           } else if (!val.trim()) {
             continue;
           }
