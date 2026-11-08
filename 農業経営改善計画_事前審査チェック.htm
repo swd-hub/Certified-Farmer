@@ -26,7 +26,25 @@
     th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
     th { background: #e8f5e9; position: sticky; top: 0; }
     table.result-table { table-layout: fixed; }
+    table.grid { width: 100%; table-layout: fixed; margin: 2px 0; }
+    table.grid th { position: static; font-size: .75rem; padding: 2px 4px; }
+    table.grid td { padding: 0; }
+    table.grid td input { width: 100%; box-sizing: border-box; border: 1px solid #ccc; padding: 3px 5px; font-size: .8rem; font-family: inherit; }
+    table.consistency-grid td textarea { display: block; width: 100%; min-width: 90px; height: 6em; min-height: 4em; box-sizing: border-box; border: 1px solid #ccc; padding: 3px 5px; font-size: .8rem; font-family: inherit; resize: none; overflow: auto; }
+    table.consistency-grid tr.resize-row td { padding: 0; border: 0; }
+    .consistency-row-resizer { height: 9px; cursor: ns-resize; touch-action: none; }
+    .consistency-row-resizer::after { content: ""; display: block; width: 44px; height: 3px; margin: 3px auto; border-radius: 2px; background: #aaa; }
+    .consistency-row-resizer:hover::after { background: #43a047; }
+    table.grid th:first-child, table.grid td:first-child { width: 62%; }
+    table.consistency-grid th:nth-child(1), table.consistency-grid td:nth-child(1) { width: 22%; }
+    table.consistency-grid th:nth-child(2), table.consistency-grid td:nth-child(2) { width: 26%; }
+    table.consistency-grid th:nth-child(3), table.consistency-grid td:nth-child(3) { width: 52%; }
+    .grid-info { font-size: .78rem; margin: 2px 0; }
+    .grid-hint { font-size: .72rem; color: #666; }
     table.result-table td { overflow-wrap: anywhere; }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { background: #c8e6c9; }
+    .kind-OK { color: #2e7d32; font-weight: bold; }
     .kind-要記入 { color: #c62828; font-weight: bold; }
     .kind-自動修正 { color: #1565c0; font-weight: bold; }
     .kind-手動確認 { color: #6d4c41; font-weight: bold; }
@@ -80,11 +98,17 @@
       <div class="table-wrap">
         <table class="result-table">
           <colgroup><col style="width:9%"><col style="width:9%"><col style="width:6%"><col style="width:25%"><col style="width:51%"></colgroup>
-          <thead><tr><th>シート</th><th>位置</th><th>区分</th><th>内容</th><th>修正（手入力）</th></tr></thead>
+          <thead><tr id="logHead">
+            <th class="sortable" data-label="シート" onclick="sortBy(0)">シート</th>
+            <th class="sortable" data-label="位置" onclick="sortBy(1)">位置</th>
+            <th class="sortable" data-label="区分" onclick="sortBy(2)">区分</th>
+            <th class="sortable" data-label="内容" onclick="sortBy(3)">内容</th>
+            <th class="sortable" data-label="修正（手入力）" onclick="sortBy(4)">修正（手入力）</th>
+          </tr></thead>
           <tbody id="logBody"></tbody>
         </table>
       </div>
-      <p class="note">「修正（手入力）」欄には、対象セルの現在の内容が自動で入ります（措置の突合の行）。経営面積合計の行は手修正できないため「エクセルを修正する」と表示されます。内容を編集して修正版をダウンロードすると、その値が対象セルに書き込まれます。内容が変わっていない行は、セルを書き換えません。対象セルのない「手動確認」の行は入力できません。</p>
+      <p class="note">「修正（手入力）」欄には、対象セルの現在の内容が自動で入ります（措置の突合の行）。③の手動確認は「項目・現状・目標・措置」の表、経営面積合計の行は申請書１の作目と作付面積の表が表示されます。どちらもExcelでコピーした範囲を貼り付けたり、手で直したりでき、修正版に反映されます（経営面積合計そのものは書き換えません）。内容を編集して修正版をダウンロードすると、その値が対象セルに書き込まれます。内容が変わっていない行は、セルを書き換えません。対象セルのない「手動確認」の行は入力できません。</p>
       <button id="download" disabled>修正版（.xlsx）をダウンロード</button>
       <div id="dlStatus"></div>
     </section>
@@ -197,6 +221,12 @@
         return [{ kind: "cropNames", sheet: sheetCR }];
       if (isCR && /単収や出荷頭数/.test(t))
         return [{ kind: "yieldCalc", sheet: sheetCR, idx }];
+      if (isCR && /販売額合計の.*を超える作目/.test(t)) {
+        // 1か所目の％＝営農類型にチェックが必要な作目の割合、2か所目の％＝複合経営になる境の割合（なければ1か所目と同じ）
+        const ms = [...t.matchAll(/(\d+)\s*[%％]/g)].map((x) => Number(x[1]));
+        const pct = ms.length ? ms[0] : 50;
+        return [{ kind: "mainCrop", sheet: sheetCR, idx: top === "【現在】" ? 0 : 1, pct, pct2: ms.length > 1 ? ms[1] : pct }];
+      }
       if (isCR && /単収の単位/.test(t))
         return [{ kind: "unitList", sheet: sheetCR }];
       if (isCR && /^単価が妥当/.test(t))
@@ -277,6 +307,7 @@
         case "consistency": return "手動確認: ③の項目；現状；目標・措置を修正欄に表示（編集可）";
         case "reasonArea": return "自動: 面積増減の理由の記入確認";
         case "skip": return "廃止（判定しない）";
+        case "mainCrop": return `自動: 販売額の${r.pct}％を超える作目の営農類型チェック（複合経営は${r.pct2}％）`;
         case "unitList": return "手動確認: 作目を列挙し、単収の単位を修正欄で編集（赤字で反映）";
         case "priceList": return "手動確認: 作目；単価を列挙";
         case "reasonSubsidy": return "自動: 補助事業の理由の記入確認";
@@ -488,8 +519,20 @@
       return ["-", "-", "手動確認", content, null, ""];
     }
 
+    // 指摘がなかった判定項目の行（修正不要）。位置は、対象シートのA1または見出しセル
+    function okRow(ctx, item) {
+      const rule = item.rules[0];
+      let ws = null;
+      try { ws = rule && rule.sheet ? sheetsFor(ctx, rule)[0] : null; } catch (e) { ws = null; }
+      const loc = sectionLoc(ctx, item.top);
+      const name = ws ? ws.name : loc ? loc.ws.name : "-";
+      const addr = ws && !(loc && loc.ws === ws) ? "A1" : loc ? loc.addr : "-";
+      return [name, addr, "OK", item.text, null, "修正不要"];
+    }
+
     // 報告行: [シート, 位置, 区分, 内容, 対象セル{ws,r,c,orig,numeric}|null, 修正入力]
     const noteCol = new Map();
+    const mainCropEdits = new Map();   // 営農類型のチェック欄：同じセルへの複数の修正を積み重ねる
 
     // 要記入を記録する。
     // targetC を指定した場合：その列のセル（例：措置、経営面積合計）が対象になり、修正欄に現在の内容が入る。
@@ -501,7 +544,7 @@
       while (getVal(ws.getCell(r, col)) !== null) col++;
       const memo = ws.getCell(r, col);
       memo.value = "【要記入】" + text;
-      memo.font = RED;
+      setFont(memo, RED);
 
       if (lockText) {
         // 手修正させない行：修正欄は入力不可にして、案内文だけを表示する（セルは書き換えない）
@@ -544,7 +587,7 @@
     function markMissing(ws, rep, r, c, label) {
       const cell = ws.getCell(r, c);
       cell.value = "記入漏れ？";
-      cell.font = RED;
+      setFont(cell, RED);
       rep.push([ws.name, cell.address, "要記入", `「${label}」が未記入のためチェックが付きません`, { ws: ws.name, r, c }, ""]);
     }
 
@@ -599,6 +642,402 @@
       if (f === null) f = unitNear(ws, r);
       if (f === null) return { m2: n * DEFAULT_AREA_F, assumed: true };
       return { m2: n * f, assumed: false };
+    }
+
+    // ================= 数式の再計算（手入力で変わったセルに依存する数式の保存値を更新） =================
+    // ExcelJSは数式を計算しないため、申請書１の面積を直しても、合計や「現在」「目標」シートの保存値が古いままになる。
+    // ここで、変わったセルに（直接・間接に）依存する数式だけを計算し直して保存値を更新する。
+    // 対応する式：四則演算・比較・セル参照（他シート可）・範囲、SUM/AVERAGE/MIN/MAX/COUNT/ROUND系/INT/ABS/IF/IFERROR/AND/OR/NOT
+    // 対応外の式は保存値を変えず、Excelで開いたときに再計算される（fullCalcOnLoad）
+    class XlErr { constructor(code) { this.code = code; } }
+
+    function xlColNum(letters) {
+      let n = 0;
+      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+      return n;
+    }
+
+    // 数式の文字列を、数値・文字列・セル参照・演算子などの並びに分ける
+    function xlTokenize(src, curSheet) {
+      const toks = [];
+      let i = 0;
+      const A1 = "\\$?([A-Z]{1,3})\\$?(\\d+)";
+      const refRx = new RegExp("^(?:(?:'((?:[^']|'')+)'|([^\\s'!:,()+\\-*/^&=<>%\"]+))!)?" + A1 + "(?::" + A1 + ")?(?![A-Za-z0-9_(])");
+      while (i < src.length) {
+        const ch = src[i];
+        if (/\s/.test(ch)) { i++; continue; }
+        const rest = src.slice(i);
+        let m;
+        if (ch === '"') {
+          let j = i + 1, str = "";
+          for (;;) {
+            if (j >= src.length) throw new Error("文字列が閉じていません");
+            if (src[j] === '"') { if (src[j + 1] === '"') { str += '"'; j += 2; continue; } break; }
+            str += src[j++];
+          }
+          toks.push({ t: "str", v: str });
+          i = j + 1;
+          continue;
+        }
+        if ((m = rest.match(/^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/)) && !/^[A-Za-z_]/.test(rest.slice(m[0].length))) {
+          // 数字の直後が文字なら（例：A1）参照なので、数字としては扱わない
+          toks.push({ t: "num", v: Number(m[0]) });
+          i += m[0].length;
+          continue;
+        }
+        if ((m = rest.match(refRx))) {
+          const sheet = m[1] !== undefined ? m[1].replace(/''/g, "'") : (m[2] !== undefined ? m[2] : curSheet);
+          const r1 = Number(m[4]), c1 = xlColNum(m[3]);
+          const hasEnd = m[5] !== undefined;
+          const r2 = hasEnd ? Number(m[6]) : r1, c2 = hasEnd ? xlColNum(m[5]) : c1;
+          toks.push({ t: "ref", sheet, r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) });
+          i += m[0].length;
+          continue;
+        }
+        if ((m = rest.match(/^[A-Za-z_][A-Za-z0-9_.]*/))) {
+          toks.push({ t: "id", v: m[0].toUpperCase() });
+          i += m[0].length;
+          continue;
+        }
+        if ((m = rest.match(/^(<>|<=|>=)/))) { toks.push({ t: "op", v: m[0] }); i += 2; continue; }
+        if ("+-*/^&=<>".includes(ch)) { toks.push({ t: "op", v: ch }); i++; continue; }
+        if (ch === "%") { toks.push({ t: "%" }); i++; continue; }
+        if (ch === "(" || ch === ")" || ch === ",") { toks.push({ t: ch }); i++; continue; }
+        throw new Error("解釈できない文字: " + ch);
+      }
+      return toks;
+    }
+
+    // 並びを式の木にする（演算子の優先順位：比較 < & < +- < */ < ^ < 単項- < %）
+    function xlParse(toks) {
+      let p = 0;
+      const peek = () => toks[p];
+      const isOp = (...ops) => peek() && peek().t === "op" && ops.includes(peek().v);
+      const expect = (t) => { if (!peek() || peek().t !== t) throw new Error("括弧やカンマが合いません"); p++; };
+      function parseCmp() {
+        let l = parseConcat();
+        while (isOp("=", "<>", "<", ">", "<=", ">=")) { const op = toks[p++].v; l = { k: "bin", op, l, r: parseConcat() }; }
+        return l;
+      }
+      function parseConcat() {
+        let l = parseAdd();
+        while (isOp("&")) { p++; l = { k: "bin", op: "&", l, r: parseAdd() }; }
+        return l;
+      }
+      function parseAdd() {
+        let l = parseMul();
+        while (isOp("+", "-")) { const op = toks[p++].v; l = { k: "bin", op, l, r: parseMul() }; }
+        return l;
+      }
+      function parseMul() {
+        let l = parsePow();
+        while (isOp("*", "/")) { const op = toks[p++].v; l = { k: "bin", op, l, r: parsePow() }; }
+        return l;
+      }
+      function parsePow() {
+        let l = parseUnary();
+        while (isOp("^")) { p++; l = { k: "bin", op: "^", l, r: parseUnary() }; }
+        return l;
+      }
+      function parseUnary() {
+        if (isOp("-", "+")) { const op = toks[p++].v; return { k: "un", op, e: parseUnary() }; }
+        return parsePostfix();
+      }
+      function parsePostfix() {
+        let e = parsePrimary();
+        while (peek() && peek().t === "%") { p++; e = { k: "pct", e }; }
+        return e;
+      }
+      function parsePrimary() {
+        const t = toks[p++];
+        if (!t) throw new Error("式が途中で終わっています");
+        if (t.t === "num") return { k: "lit", v: t.v };
+        if (t.t === "str") return { k: "lit", v: t.v };
+        if (t.t === "ref") return { k: "ref", ref: t };
+        if (t.t === "(") { const e = parseCmp(); expect(")"); return e; }
+        if (t.t === "id") {
+          if (peek() && peek().t === "(") {
+            p++;
+            const args = [];
+            if (peek() && peek().t === ")") { p++; return { k: "call", name: t.v, args }; }
+            for (;;) {
+              if (peek() && (peek().t === "," || peek().t === ")")) args.push({ k: "empty" });
+              else args.push(parseCmp());
+              if (peek() && peek().t === ",") { p++; continue; }
+              break;
+            }
+            expect(")");
+            return { k: "call", name: t.v, args };
+          }
+          if (t.v === "TRUE") return { k: "lit", v: true };
+          if (t.v === "FALSE") return { k: "lit", v: false };
+          throw new Error("未対応の名前: " + t.v);
+        }
+        throw new Error("式を解釈できません");
+      }
+      const tree = parseCmp();
+      if (p < toks.length) throw new Error("式の後ろに余分な部分があります");
+      return tree;
+    }
+
+    // 数式の計算。cellValue(sheet, r, c) は、そのセルの現在の値を返す関数
+    function xlEvaluate(tree, cellValue) {
+      const toNumber = (v) => {
+        if (v instanceof XlErr) return v;
+        if (v === null || v === undefined || v === "") return 0;
+        if (typeof v === "boolean") return v ? 1 : 0;
+        if (typeof v === "number") return v;
+        const n = Number(String(v).replace(/,/g, ""));
+        return isNaN(n) ? new XlErr("#VALUE!") : n;
+      };
+      const toText = (v) => (v === null || v === undefined ? "" : typeof v === "boolean" ? (v ? "TRUE" : "FALSE") : String(v));
+      const scalar = (v) => (Array.isArray(v) ? (v.length ? v[0] : null) : v);
+      const cmp = (a, b) => {
+        if (a === null) a = typeof b === "string" ? "" : typeof b === "boolean" ? false : 0;
+        if (b === null) b = typeof a === "string" ? "" : typeof a === "boolean" ? false : 0;
+        const rank = (v) => (typeof v === "number" ? 0 : typeof v === "string" ? 1 : 2);
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        if (typeof a === "string") { const x = a.toLowerCase(), y = b.toLowerCase(); return x < y ? -1 : x > y ? 1 : 0; }
+        return Number(a) - Number(b);
+      };
+      const flat = (v, out) => { if (Array.isArray(v)) v.forEach((x) => flat(x, out)); else out.push(v); return out; };
+      const round = (x, n, mode) => {
+        const f = Math.pow(10, n);
+        const y = Math.abs(x) * f;
+        const r = mode === "up" ? Math.ceil(y - 1e-9) : mode === "down" ? Math.floor(y + 1e-9) : Math.round(y + 1e-9);
+        return (Math.sign(x) * r) / f;
+      };
+      const numsOf = (args) => {          // 範囲の中は数値だけ、直接の引数は数値に変換
+        const out = [];
+        for (const a of args) {
+          if (a.k === "ref" && (a.ref.r1 !== a.ref.r2 || a.ref.c1 !== a.ref.c2)) {
+            for (const v of flat(ev(a), [])) { if (v instanceof XlErr) return v; if (typeof v === "number") out.push(v); }
+          } else {
+            const v = scalar(ev(a));
+            if (v instanceof XlErr) return v;
+            if (a.k === "empty" || v === null) continue;
+            const n = toNumber(v);
+            if (n instanceof XlErr) return n;
+            out.push(n);
+          }
+        }
+        return out;
+      };
+
+      function ev(node) {
+        switch (node.k) {
+          case "lit": return node.v;
+          case "empty": return null;
+          case "ref": {
+            const r = node.ref;
+            if (r.r1 === r.r2 && r.c1 === r.c2) return cellValue(r.sheet, r.r1, r.c1);
+            const out = [];
+            for (let rr = r.r1; rr <= r.r2; rr++) for (let cc = r.c1; cc <= r.c2; cc++) out.push(cellValue(r.sheet, rr, cc));
+            return out;
+          }
+          case "un": {
+            const v = toNumber(scalar(ev(node.e)));
+            return v instanceof XlErr ? v : node.op === "-" ? -v : v;
+          }
+          case "pct": { const v = toNumber(scalar(ev(node.e))); return v instanceof XlErr ? v : v / 100; }
+          case "bin": {
+            const a = scalar(ev(node.l)), b = scalar(ev(node.r));
+            if (a instanceof XlErr) return a;
+            if (b instanceof XlErr) return b;
+            if (node.op === "&") return toText(a) + toText(b);
+            if (["=", "<>", "<", ">", "<=", ">="].includes(node.op)) {
+              const c = cmp(a, b);
+              return node.op === "=" ? c === 0 : node.op === "<>" ? c !== 0 : node.op === "<" ? c < 0 : node.op === ">" ? c > 0 : node.op === "<=" ? c <= 0 : c >= 0;
+            }
+            const x = toNumber(a), y = toNumber(b);
+            if (x instanceof XlErr) return x;
+            if (y instanceof XlErr) return y;
+            if (node.op === "+") return x + y;
+            if (node.op === "-") return x - y;
+            if (node.op === "*") return x * y;
+            if (node.op === "/") return y === 0 ? new XlErr("#DIV/0!") : x / y;
+            if (node.op === "^") return Math.pow(x, y);
+            throw new Error("未対応の演算子");
+          }
+          case "call": return call(node);
+        }
+        throw new Error("未対応の式");
+      }
+
+      function call(node) {
+        const a = node.args;
+        switch (node.name) {
+          case "SUM": { const n = numsOf(a); return n instanceof XlErr ? n : n.reduce((x, y) => x + y, 0); }
+          case "AVERAGE": { const n = numsOf(a); return n instanceof XlErr ? n : n.length ? n.reduce((x, y) => x + y, 0) / n.length : new XlErr("#DIV/0!"); }
+          case "MIN": { const n = numsOf(a); return n instanceof XlErr ? n : n.length ? Math.min(...n) : 0; }
+          case "MAX": { const n = numsOf(a); return n instanceof XlErr ? n : n.length ? Math.max(...n) : 0; }
+          case "COUNT": { const n = numsOf(a); return n instanceof XlErr ? 0 : n.length; }
+          case "ABS": { const v = toNumber(scalar(ev(a[0]))); return v instanceof XlErr ? v : Math.abs(v); }
+          case "INT": { const v = toNumber(scalar(ev(a[0]))); return v instanceof XlErr ? v : Math.floor(v); }
+          case "ROUND": case "ROUNDUP": case "ROUNDDOWN": {
+            const x = toNumber(scalar(ev(a[0]))), n = toNumber(a[1] ? scalar(ev(a[1])) : 0);
+            if (x instanceof XlErr) return x;
+            if (n instanceof XlErr) return n;
+            return round(x, n, node.name === "ROUNDUP" ? "up" : node.name === "ROUNDDOWN" ? "down" : "");
+          }
+          case "IF": {
+            const c = scalar(ev(a[0]));
+            if (c instanceof XlErr) return c;
+            const truth = typeof c === "boolean" ? c : typeof c === "number" ? c !== 0 : null;
+            if (truth === null) return new XlErr("#VALUE!");
+            const branch = truth ? a[1] : a[2];
+            if (!branch) return truth ? true : false;
+            const v = scalar(ev(branch));
+            return branch.k === "empty" || v === null ? 0 : v;       // 空の引数は0
+          }
+          case "IFERROR": {
+            const v = scalar(ev(a[0]));
+            return v instanceof XlErr ? (a[1] ? scalar(ev(a[1])) : 0) : v;
+          }
+          case "AND": case "OR": {
+            const vals = flat(a.map((x) => ev(x)), []).filter((v) => v !== null && typeof v !== "string");
+            for (const v of vals) if (v instanceof XlErr) return v;
+            const bs = vals.map((v) => (typeof v === "boolean" ? v : v !== 0));
+            return node.name === "AND" ? bs.every(Boolean) : bs.some(Boolean);
+          }
+          case "NOT": {
+            const v = scalar(ev(a[0]));
+            return v instanceof XlErr ? v : !(typeof v === "boolean" ? v : v !== 0);
+          }
+          case "CONCATENATE": return a.map((x) => toText(scalar(ev(x)))).join("");
+          case "ISBLANK": return scalar(ev(a[0])) === null;
+        }
+        throw new Error("未対応の関数: " + node.name);
+      }
+      return scalar(ev(tree));
+    }
+
+    // 値の控え（数式以外のセル）を取り、あとで比べて、手入力で変わったセルを知る
+    function snapshotValues(wb) {
+      const snap = new Map();
+      wb.eachSheet((ws) => ws.eachRow({ includeEmpty: false }, (row, r) => row.eachCell({ includeEmpty: false }, (cell, c) => {
+        if (cell.master && cell.master !== cell) return;
+        const v = cell.value;
+        if (v && typeof v === "object" && (v.formula || v.sharedFormula)) return;
+        snap.set(`${ws.name}\\u0000${r}\\u0000${c}`, JSON.stringify(v));
+      })));
+      return snap;
+    }
+    function changedSince(wb, snap) {
+      const now = snapshotValues(wb);
+      const out = [];
+      for (const k of new Set([...snap.keys(), ...now.keys()]))
+        if (snap.get(k) !== now.get(k)) { const [sheet, r, c] = k.split("\\u0000"); out.push({ sheet, r: Number(r), c: Number(c) }); }
+      return out;
+    }
+
+    // 変わったセルに依存する数式を計算し直し、保存値を更新する。{ updated, failed } を返す
+    // opts.all = true なら、すべての数式を計算し直す（検証用）
+    function recalcDependents(wb, changed, opts = {}) {
+      const formulas = [];
+      wb.eachSheet((ws) => ws.eachRow({ includeEmpty: false }, (row, r) => row.eachCell({ includeEmpty: false }, (cell, c) => {
+        if (cell.master && cell.master !== cell) return;
+        const v = cell.value;
+        if (!(v && typeof v === "object" && (v.formula || v.sharedFormula))) return;
+        formulas.push({ ws, r, c, cell, key: `${ws.name}\\u0000${r}\\u0000${c}` });
+      })));
+
+      const failed = [];
+      for (const f of formulas) {
+        try {
+          f.tree = xlParse(xlTokenize(f.cell.formula, f.ws.name));
+          f.refs = [];
+          const walk = (n) => {
+            if (!n || typeof n !== "object") return;
+            if (n.k === "ref") f.refs.push(n.ref);
+            for (const k of ["l", "r", "e"]) if (n[k]) walk(n[k]);
+            if (n.args) n.args.forEach(walk);
+          };
+          walk(f.tree);
+        } catch (e) {
+          f.err = e.message;
+        }
+      }
+
+      // 変わったセルから、依存する数式を順にたどる
+      const dirty = new Set();
+      const hit = (ref, sheet, r, c) => ref.sheet === sheet && r >= ref.r1 && r <= ref.r2 && c >= ref.c1 && c <= ref.c2;
+      const pts = changed.map((x) => ({ sheet: x.sheet, r: x.r, c: x.c }));
+      if (opts.all) formulas.forEach((f) => dirty.add(f.key));
+      else {
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const f of formulas) {
+            if (dirty.has(f.key)) continue;
+            if (f.err) { if (pts.some(() => false)) grew = true; continue; }
+            if (f.refs.some((ref) => pts.some((p) => hit(ref, p.sheet, p.r, p.c)))) {
+              dirty.add(f.key);
+              pts.push({ sheet: f.ws.name, r: f.r, c: f.c });
+              grew = true;
+            }
+          }
+        }
+      }
+
+      const byKey = new Map(formulas.map((f) => [f.key, f]));
+      const memo = new Map();
+      const busy = new Set();
+      const plain = (cell) => {
+        const v = getVal(cell);                      // 数式の保存値・書式付き文字・日付などを値にする
+        return v === undefined ? null : v;
+      };
+      const cellValue = (sheetName, r, c) => {
+        const ws = wb.getWorksheet(sheetName);
+        if (!ws) return new XlErr("#REF!");
+        let cell = ws.getCell(r, c);
+        if (cell.master && cell.master !== cell) cell = cell.master;
+        const key = `${ws.name}\\u0000${cell.row}\\u0000${cell.col}`;
+        if (dirty.has(key)) return evalFormula(byKey.get(key));
+        const v = plain(cell);
+        return v;
+      };
+      const evalFormula = (f) => {
+        if (memo.has(f.key)) return memo.get(f.key);
+        if (busy.has(f.key)) throw new Error("循環参照");
+        busy.add(f.key);
+        try {
+          if (f.err) throw new Error(f.err);
+          const res = xlEvaluate(f.tree, cellValue);
+          memo.set(f.key, res);
+          return res;
+        } finally {
+          busy.delete(f.key);
+        }
+      };
+
+      let updated = 0;
+      const bad = new Set();
+      for (const key of dirty) {
+        const f = byKey.get(key);
+        try {
+          const res = evalFormula(f);
+          const cur = f.cell.value;
+          let out;
+          if (res instanceof XlErr) out = { error: res.code };
+          else if (typeof res === "number") { if (!isFinite(res)) throw new Error("計算結果が数値になりません"); out = res; }
+          else if (res === null) out = 0;
+          else out = res;
+          f.cell.value = { ...cur, result: out };
+          updated++;
+        } catch (e) {
+          bad.add(key);
+          failed.push(`${f.ws.name}!${f.cell.address}（${e.message}）`);
+          memo.delete(key);
+        }
+      }
+      return { updated, failed, dirtyCount: dirty.size };
+    }
+
+    // セルの文字の書式を変える。ExcelJSでは cell.font = … が同じ書式を共有する他のセルにも及ぶため、
+    // このセルだけの書式（style）として差し替える
+    function setFont(cell, font) {
+      cell.style = { ...cell.style, font };
     }
 
     const fmtA = (m2) => `${Math.round(m2) / 100}a`;
@@ -879,6 +1318,66 @@
         .map((x) => norm(x.v));
     }
 
+    // ---- 営農類型（申請書１ ①（１））のチェック欄と、販売額の割合による判定 ----
+    const FARM_TYPES = [
+      "稲作", "麦類作", "雑穀・いも類・豆類", "工芸農作物", "露地野菜", "施設野菜", "果樹類", "花き・花木",
+      "その他の作物", "酪農", "肉用牛", "養豚", "養鶏", "養蚕", "その他の畜産", "複合経営"
+    ];
+    // 「酪  農」のように文字の間に空白があっても一致するようにする
+    const looseRx = (label) => label.split("").map((ch) => esc(ch)).join("\\s*");
+    const BOX_MARK = /[□■☑☐✓✔]/;
+
+    // 作目名から営農類型を推定する。{ cat } ／ 野菜で露地か施設か不明なら { veg: true } ／ 不明なら null
+    function cropFarmType(rawName) {
+      const n = norm(rawName);
+      if (/繁殖牛|肥育|肉用牛|黒毛和牛|和牛|子牛|親牛|育成牛|肉牛/.test(n)) return { cat: "肉用牛" };
+      if (/乳牛|酪農|生乳|ホルスタイン|ジャージー/.test(n)) return { cat: "酪農" };
+      if (/養豚|豚/.test(n)) return { cat: "養豚" };
+      if (/養鶏|採卵|ブロイラー|鶏|卵/.test(n)) return { cat: "養鶏" };
+      if (/蚕|繭/.test(n)) return { cat: "養蚕" };
+      if (/稲|米|コシヒカリ|きぬむすめ|ヒノヒカリ|ひとめぼれ|つや姫|あきたこまち|みほひかり|WCS/.test(n)) return { cat: "稲作" };
+      if (/麦/.test(n)) return { cat: "麦類作" };
+      if (/大豆|小豆|黒豆|そば|蕎麦|雑穀|さといも|里芋|里いも|じゃがいも|馬鈴薯|さつまいも|甘藷|ながいも|山芋|やまのいも|いも類/.test(n)) return { cat: "雑穀・いも類・豆類" };
+      if (/茶|たばこ|タバコ|いぐさ|こんにゃく|なたね|菜種|ホップ|薬草|桑/.test(n)) return { cat: "工芸農作物" };
+      if (/花き|花木|切り花|切花|菊|カーネーション|洋ラン|シクラメン|鉢物|苗木|ばら|バラ|りんどう|リンドウ|ゆり|トルコギキョウ/.test(n)) return { cat: "花き・花木" };
+      if (/果樹|ぶどう|ブドウ|デラウェア|シャインマスカット|梨|なし|柿|桃|もも|りんご|みかん|柑橘|いちじく|ブルーベリー|栗|すだち|かき|さくらんぼ|キウイ|レモン|ゆず/.test(n)) return { cat: "果樹類" };
+      if (/椎茸|しいたけ|きのこ|キノコ|えのき|しめじ|なめこ|舞茸|まいたけ|牧草|飼料作物|デントコーン|ソルゴー|ライグラス|飼料用トウモロコシ|青刈/.test(n)) return { cat: "その他の作物" };
+      if (/野菜|きゅうり|キュウリ|トマト|なす|ナス|ピーマン|パプリカ|ししとう|ほうれん草|ホウレンソウ|葉物|小松菜|チンゲンサイ|水菜|ねぎ|ネギ|玉ねぎ|たまねぎ|キャベツ|レタス|白菜|大根|だいこん|にんじん|人参|ブロッコリー|カリフラワー|とうもろこし|トウモロコシ|枝豆|えだまめ|いんげん|ゴーヤ|かぼちゃ|すいか|スイカ|メロン|いちご|イチゴ|しょうが|生姜|にんにく|ごぼう|アスパラ|みつば|ニラ|にら|セロリ|オクラ|ズッキーニ|ブロッコリ|スナップ|えんどう|ほうれんそう/.test(n)) {
+        if (/施設|ハウス/.test(n)) return { cat: "施設野菜" };
+        if (/露地/.test(n)) return { cat: "露地野菜" };
+        return { veg: true };
+      }
+      return null;
+    }
+
+    // 申請書１ ①（１）営農類型：チェック欄のセルと、現状（左）・目標（右）の境の列
+    function farmTypeBoxes(ctx) {
+      for (const ws of ctx.wb.worksheets) {
+        const all = allValues(ws);
+        const h = all.find((x) => /^（１）営農類型/.test(norm(x.v)));
+        if (!h) continue;
+        const next = all.find((x) => x.r > h.r && /^（２）/.test(norm(x.v)));
+        const endRow = next ? next.r : h.r + 6;
+        const cells = all.filter((x) => x.r > h.r && x.r < endRow && BOX_MARK.test(String(x.v)));
+        const tgtHdr = all.find((x) => x.r > h.r && x.r < endRow && /^目標/.test(norm(x.v)));
+        const split = tgtHdr ? tgtHdr.c : Math.floor(ws.columnCount / 2) + 1;
+        return { ws, cells, split };
+      }
+      return null;
+    }
+
+    // 営農類型の選択肢が、現状（half=0）／目標（half=1）でチェックされているか
+    function farmTypeState(boxes, half, label) {
+      const rx = new RegExp("([□■☑☐✓✔])\\s*" + looseRx(label));
+      for (const x of boxes.cells) {
+        if ((x.c >= boxes.split ? 1 : 0) !== half) continue;
+        const text = String(x.v);
+        const m = text.match(rx);
+        if (m) return { found: true, checked: /[■☑✓✔]/.test(m[1]), cell: x, text };
+      }
+      return { found: false, checked: false };
+    }
+
     // ================= 判定の実行 =================
     // 各関数は「チェックが付くべき状態」が成り立たないときだけ要記入を出す。
     const EXEC = {
@@ -1023,11 +1522,11 @@
       // 項目ごとに1行（改行区切り）、各行は「項目；現状；目標・措置」
       consistency(rule, ctx) {
         // 結果表に出す文言（チェック票の文言に関わらずこの文にする）
-        const CONS_TEXT = "項目、現状、目標・措置の記載内容が生産方式の合理化である。";
+        const CONS_TEXT = "項目、現状、目標・措置の記載内容が生産方式の合理化であるか確認する。";
         const t3 = read3Table(ctx, rule);
         if (t3.error) { ctx.rep.push(manualRow(ctx, rule.top, CONS_TEXT, t3.error)); return; }
         ctx.rep.push([t3.ws.name, t3.anchorAddr, "手動確認", CONS_TEXT,
-          { ws: t3.ws.name, kind: "consistency", blocks: t3.blocks, orig: t3.joined }, t3.joined]);
+          { ws: t3.ws.name, kind: "consistency", blocks: t3.blocks, values: t3.blocks.map((b) => b.orig.slice()), orig: t3.joined }, t3.joined]);
       },
 
       // （別紙）補助事業を要望する場合の理由が③に読み取れるか
@@ -1040,7 +1539,7 @@
         if (t3.error) { ctx.rep.push(manualRow(ctx, rule.top, text, t3.error)); return; }
         const loc = sectionLoc(ctx, rule.top);
         ctx.rep.push([loc ? loc.ws.name : "-", loc ? loc.addr : "-", "手動確認", text,
-          { ws: t3.ws.name, kind: "consistency", blocks: t3.blocks, orig: t3.joined }, t3.joined]);
+          { ws: t3.ws.name, kind: "consistency", blocks: t3.blocks, values: t3.blocks.map((b) => b.orig.slice()), orig: t3.joined }, t3.joined]);
       },
 
       match(rule, ctx) {
@@ -1132,14 +1631,46 @@
         if (fApp === null) notes.push("申請書２の経営面積合計は単位表記が無いため a として計算しています");
         const note = notes.length ? `（${notes.join("。")}）` : "";
 
+        // 修正欄には、申請書１②（１）生産の「作目・部門名」と「作付面積」の表を、元の表と同じ形で出す
+        // （Excelからの貼り付け・手修正ができ、修正版のダウンロードで申請書１に反映する）
+        const nameHdr = inRange(app1, s1).filter((x) => /^作目・?部門名/.test(norm(x.v))).sort((a, b) => a.c - b.c)[0];
+        const gridFor = (areaC, limitM2, label) => {
+          const rows = [];
+          if (nameHdr)
+            for (const o of rowNames(app1, { from: hdrRow, to: s1.to })) {
+              if (/合計|^計$/.test(o.n) || o.c !== nameHdr.c) continue;     // 耕種の作目の行だけ
+              const nameCell = app1.getCell(o.r, o.c);
+              const av = getVal(app1.getCell(o.r, areaC));
+              const uc = getVal(app1.getCell(o.r, areaC + 1));              // 面積の右隣の単位（a・haなど）
+              const uf = uc !== null && String(uc).trim() !== "" ? unitOfText(norm(uc)) : null;
+              const f = uf === null ? (unitNear(app1, o.r) ?? DEFAULT_AREA_F) : uf;   // 0＝面積以外の単位（合計に含めない）
+              rows.push({
+                r: o.r, nameC: o.c, areaC,
+                name: String(getVal(nameCell) ?? "").replace(/\s*\n\s*/g, " ").trim(),
+                area: av === null ? "" : String(av).replace(/\s*\n\s*/g, " ").trim(),
+                numeric: av === null || typeof av === "number",
+                f
+              });
+            }
+          const unitLabel = hdrs[label === "現状" ? 0 : 1] ? String(getVal(app1.getCell(hdrs[label === "現状" ? 0 : 1].r, areaC))).replace(/\s+/g, "") : "作付面積";
+          return { kind: "grid", ws: app1.name, rows, header: ["作目・部門名", unitLabel], limitM2 };
+        };
+        const pushGrid = (text, areaC, limitM2, label) => {
+          const before = ctx.rep.length;
+          flagCell(app2, ctx.rep, flagRow, text, label === "現状" ? curTC : tgtTC, "エクセルを修正する");
+          if (ctx.rep.length === before) return;
+          const g = gridFor(areaC, limitM2, label);
+          if (!g.rows.length) return;                              // 表を読めないときは、従来どおりExcelでの修正を案内
+          const last = ctx.rep[ctx.rep.length - 1];
+          last[4] = g;
+          last[5] = g.rows.map((x) => `${x.name}\t${x.area}`).join("\n");
+        };
         if (app2Cur > cur + 1e-6)
-          flagCell(app2, ctx.rep, flagRow,
-            `現状の経営面積合計（${fmtA(app2Cur)}）が申請書１の作付面積合計（現状${fmtA(cur)}）を超えています${note}`,
-            curTC, "エクセルを修正する");
+          pushGrid(`申請書１の現在の作付面積合計（現状${fmtA(cur)}）が現状の経営面積合計（${fmtA(app2Cur)}）以上である。${note}`,
+            curC, app2Cur, "現状");
         if (app2Tgt > tgt + 1e-6)
-          flagCell(app2, ctx.rep, flagRow,
-            `目標の経営面積合計（${fmtA(app2Tgt)}）が申請書１の作付面積合計（目標${fmtA(tgt)}）を超えています${note}`,
-            tgtTC, "エクセルを修正する");
+          pushGrid(`申請書１の目標の作付面積合計（目標${fmtA(tgt)}）が目標の経営面積合計（${fmtA(app2Tgt)}）以上である。${note}`,
+            tgtC, app2Tgt, "目標");
       },
 
       // （参考）構成員表の記入漏れ（○・■などの任意列は除外）
@@ -1314,6 +1845,88 @@
               }
             }
           }
+        }
+      },
+
+      // 販売額合計の○％を超える作目が営農類型（申請書１ ①（１））にチェックされているか、
+      // ○％を超える作目がない場合は複合経営にチェックされているか
+      // 作目名から営農類型を推定する。野菜の露地・施設が名前から分からないものは、どちらか一方のチェックがあればよいとみなす
+      mainCrop(rule, ctx) {
+        const boxes = farmTypeBoxes(ctx);
+        if (!boxes) return fallback(ctx, rule, "申請書１の「（１）営農類型」が見つかりません");
+        for (const ws of sheetsFor(ctx, rule)) {
+          const cr = readCropCols(ws);
+          const sRow = cr && cr.all.find((x) => /^販売額/.test(norm(x.v)));
+          if (!cr || !sRow) { fallback(ctx, rule, `${ws.name}の作目または「販売額」の欄が見つかりません`); continue; }
+          const totHdr = cr.all.find((x) => x.r === cr.rowHdr.r && /^合計$/.test(norm(x.v)));
+          const sales = [];
+          for (const o of cr.names) {
+            const v = toNum(getVal(ws.getCell(sRow.r, o.c)));
+            if (v) sales.push({ n: o.n, v, t: cropFarmType(o.n) });
+          }
+          const sum = sales.reduce((a, b) => a + b.v, 0);
+          const tv = totHdr ? toNum(getVal(ws.getCell(sRow.r, totHdr.c))) : null;
+          const total = tv || sum;
+          if (!total) continue;                                  // 販売額なし
+
+          const lower = {};                                     // 作目名から確定できる営農類型ごとの販売額
+          let veg = 0, unk = 0;
+          const unkNames = [];
+          for (const x of sales) {
+            if (x.t && x.t.cat) lower[x.t.cat] = (lower[x.t.cat] || 0) + x.v;
+            else if (x.t && x.t.veg) veg += x.v;
+            else { unk += x.v; unkNames.push(x.n); }
+          }
+          const limit = (rule.pct / 100) * total;          // 営農類型にチェックが必要な作目の境
+          const limit2 = ((rule.pct2 ?? rule.pct) / 100) * total;   // 複合経営になる境（超える作目がなければ複合経営）
+          const pct2 = rule.pct2 ?? rule.pct;
+          const pct = (v) => `${Math.round((v / total) * 1000) / 10}％`;
+          const half = rule.idx;
+          const sideName = half === 0 ? "現状" : "目標";
+          const flagBox = (label, text) => {
+            const st = farmTypeState(boxes, half, label);
+            if (!st.found) { ctx.rep.push(manualRow(ctx, rule.top, text, `申請書１に「${label}」のチェック欄が見つかりません`)); return; }
+            const cell = boxes.ws.getCell(st.cell.r, st.cell.c);
+            const before = ctx.rep.length;
+            flagCell(boxes.ws, ctx.rep, st.cell.r, text, st.cell.c);
+            // 修正欄には、チェックを付けた後の文字を入れる（同じセルへの複数の指摘は積み重ねる）
+            const key = boxes.ws.name + "!" + cell.address + "!" + half;
+            const cur = mainCropEdits.get(key) ?? st.text;
+            const next = cur.replace(new RegExp("□(\\s*" + looseRx(label) + ")"), "☑$1");
+            mainCropEdits.set(key, next);
+            if (ctx.rep.length > before) ctx.rep[ctx.rep.length - 1][5] = next;
+          };
+
+          const must = Object.keys(lower).filter((c) => lower[c] > limit);
+          for (const c of must) {
+            const st = farmTypeState(boxes, half, c);
+            if (st.found && !st.checked)
+              flagBox(c, `「${c}」が販売額合計の${pct(lower[c])}（${rule.pct}％超）ですが、営農類型の${sideName}にチェックがありません`);
+            else if (!st.found)
+              flagBox(c, `「${c}」が販売額合計の${pct(lower[c])}（${rule.pct}％超）です`);
+          }
+          if (Object.keys(lower).some((c) => lower[c] > limit2)) continue;   // 超える作目があるので、複合経営は不要
+          // 確定できる営農類型に${pct2}％超がない。不明分（野菜の露地・施設、未登録の作目）を足すと超える可能性があるか
+          const upper = (c) => (lower[c] || 0) + (c === "露地野菜" || c === "施設野菜" ? veg : 0) + unk;
+          const possible = FARM_TYPES.filter((c) => c !== "複合経営" && (veg + unk > 0 || lower[c]) && upper(c) > limit2);
+          const compound = farmTypeState(boxes, half, "複合経営");
+          if (!possible.length) {
+            if (compound.found && !compound.checked)
+              flagBox("複合経営", `販売額合計の${pct2}％を超える作目がないため、営農類型の${sideName}の「複合経営」にチェックが必要です`);
+            else if (!compound.found)
+              ctx.rep.push(manualRow(ctx, rule.top, rule.text, "申請書１に「複合経営」のチェック欄が見つかりません"));
+            continue;
+          }
+          // 不明分の扱いで結果が変わる場合：複合経営か、該当しうる営農類型のどれかにチェックがあればよい
+          const anyChecked = compound.checked || possible.some((c) => farmTypeState(boxes, half, c).checked) ||
+            (veg > 0 && ["露地野菜", "施設野菜"].some((c) => farmTypeState(boxes, half, c).checked));
+          if (!anyChecked)
+            ctx.rep.push(manualRow(ctx, rule.top, rule.text,
+              `${ws.name}：営農類型の${sideName}にチェックがありません（作目から営農類型を判定しきれない作目があります：` +
+              `${[...unkNames, ...(veg ? ["野菜（露地・施設）"] : [])].join("、") || possible.join("、")}）`));
+          else if (unk > 0 && unk > limit2)
+            ctx.rep.push(manualRow(ctx, rule.top, rule.text,
+              `${ws.name}：営農類型を判定できない作目（${unkNames.join("、")}）が販売額合計の${pct(unk)}あるため手動で確認`));
         }
       },
 
@@ -1662,9 +2275,21 @@
           shapesOk
         };
         noteCol.clear();
+        mainCropEdits.clear();
 
         EXEC.year({ kind: "year" }, ctx);
-        for (const item of CHK.items)
+        let carry = ctx.rep.length;      // 目標年度の自動修正の行（最初の「年度が正しい」の項目の結果として数える）
+        let itemNo = 0;
+        for (const item of CHK.items) {
+          if (item.rules.length && item.rules.every((r) => r.kind === "skip")) continue;   // 廃止した項目
+          itemNo++;
+          const before = ctx.rep.length;
+          let has = false;
+          if (carry && item.rules.some((r) => r.kind === "year")) {
+            has = true;
+            ctx.rep.slice(0, carry).forEach((r) => { r[6] = itemNo; });
+            carry = 0;
+          }
           for (const rule of item.rules) {
             if (!EXEC[rule.kind]) {
               ctx.rep.push(manualRow(ctx, item.top, item.text));
@@ -1676,6 +2301,10 @@
               ctx.rep.push(manualRow(ctx, item.top, item.text, `処理エラー: ${err.message}`));
             }
           }
+          // 指摘がなければ「修正不要」の行を出す（判定項目の表と結果の表を対応させる）
+          if (!has && ctx.rep.length === before) ctx.rep.push(okRow(ctx, item));
+          for (let i = before; i < ctx.rep.length; i++) ctx.rep[i][6] = itemNo;   // この行がどの判定項目の結果か
+        }
 
         OUT_WB = wb;
         OUT_REP = ctx.rep;
@@ -1692,41 +2321,292 @@
       }
     }
 
+    // ---- 結果表の表示とソート ----
+    let SORT = { col: -1, dir: 0 };      // dir: 1=昇順, -1=降順, 0=元の順
+    let SHOWN_TY = null;
+
+    function sortBy(col) {
+      // 同じ列を続けて押すと 昇順 → 降順 → 元の順
+      if (SORT.col !== col) SORT = { col, dir: 1 };
+      else if (SORT.dir === 1) SORT = { col, dir: -1 };
+      else SORT = { col: -1, dir: 0 };
+      renderRows();
+    }
+
+    // 結果の行を判定項目ごとにまとめる（1項目＝1行）。複数箇所に指摘がある項目は、番号を付けて1行に並べる
+    const SEVERITY = { "要記入": 4, "手動確認": 3, "自動修正": 2, "OK": 1 };
+    function groupRows(rep) {
+      const map = new Map();
+      rep.forEach((r, i) => {
+        const k = r[6] === undefined ? "x" + i : r[6];
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(r);
+      });
+      return [...map.values()].map((rows) => {
+        const worst = rows.reduce((w, r) => ((SEVERITY[r[2]] || 0) > (SEVERITY[w] || 0) ? r[2] : w), rows[0][2]);
+        const multi = rows.length > 1;
+        const lab = (r, i, text) => (multi ? `${i + 1}) ` : "") + (text ?? "");
+        return {
+          rows, worst, multi,
+          sheet: rows.map((r, i) => lab(r, i, r[0])).join("\n"),
+          loc: rows.map((r, i) => lab(r, i, r[1])).join("\n"),
+          content: rows.map((r, i) => lab(r, i, r[3])).join("\n"),
+          edit: rows.map((r) => r[5] || "").join("\n")
+        };
+      });
+    }
+
+    function sortedGroups() {
+      const groups = groupRows(OUT_REP);
+      if (SORT.dir === 0 || SORT.col < 0) return groups;
+      const cmp = new Intl.Collator("ja", { numeric: true });
+      const key = (g) => [g.sheet, g.loc, g.worst, g.content, g.edit][SORT.col];
+      return groups.map((g, i) => [g, i])
+        .sort((x, y) => SORT.dir * cmp.compare(key(x[0]), key(y[0])) || x[1] - y[1])
+        .map((x) => x[0]);
+    }
+
     function showResult(rep, ty) {
-      const fixed = rep.filter((r) => r[2] === "自動修正").length;
-      const req = rep.filter((r) => r[2] === "要記入").length;
-      const man = rep.filter((r) => r[2] === "手動確認").length;
+      SORT = { col: -1, dir: 0 };
+      SHOWN_TY = ty;
+      renderRows();
+      $("resultPanel").hidden = false;
+      $("download").disabled = false;
+      $("dlStatus").textContent = "";
+    }
+
+    // 作目・面積の表（元の表と同じ形）。値は r[5] に「作目<TAB>面積」の行として保持する（Excelの範囲と同じ形）
+    function buildGrid(r) {
+      const t = r[4];
+      const wrap = document.createElement("div");
+      const data = (r[5] || "").split("\n").map((l) => l.split("\t"));
+      const table = document.createElement("table");
+      table.className = "grid";
+      const head = document.createElement("tr");
+      t.header.forEach((h) => { const th = document.createElement("th"); th.textContent = h; head.appendChild(th); });
+      table.appendChild(head);
+      const inputs = [];
+      const info = document.createElement("div");
+      info.className = "grid-info";
+
+      const sync = () => {
+        r[5] = inputs.map((row) => row.map((i) => i.value).join("\t")).join("\n");
+        // 作付面積合計と経営面積合計の比較を、その場で更新する
+        let sum = 0;
+        inputs.forEach((row, i) => {
+          const n = Number(String(row[1].value).replace(/,/g, "").replace(/[^0-9.\-]/g, ""));
+          if (row[1].value.trim() !== "" && !isNaN(n) && t.rows[i].f > 0) sum += n * t.rows[i].f;
+        });
+        const ok = sum + 1e-6 >= t.limitM2;
+        info.textContent = `作付面積合計 ${fmtA(sum)} ／ 経営面積合計 ${fmtA(t.limitM2)}（${ok ? "満たしています" : "まだ不足です"}）`;
+        info.style.color = ok ? "#2e7d32" : "#c62828";
+      };
+
+      t.rows.forEach((row, i) => {
+        const tr = document.createElement("tr");
+        inputs[i] = [];
+        for (let j = 0; j < 2; j++) {
+          const td = document.createElement("td");
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.value = (data[i] && data[i][j]) || "";
+          if (j === 1) inp.style.textAlign = "right";
+          inp.addEventListener("input", sync);
+          // Excelからのコピー（タブ・改行区切り）を、このセルを先頭に貼り付ける
+          inp.addEventListener("paste", (ev) => {
+            const text = (ev.clipboardData || window.clipboardData).getData("text");
+            if (!/[\t\n]/.test(text)) return;                     // 1つの値は通常の貼り付け
+            ev.preventDefault();
+            const lines = text.replace(/\r/g, "").replace(/\n+$/, "").split("\n").map((l) => l.split("\t"));
+            lines.forEach((cols, a) => cols.forEach((v, b) => {
+              if (inputs[i + a] && inputs[i + a][j + b]) inputs[i + a][j + b].value = v.trim();
+            }));
+            sync();
+          });
+          inputs[i][j] = inp;
+          td.appendChild(inp);
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+      });
+      const hint = document.createElement("div");
+      hint.className = "grid-hint";
+      hint.textContent = "Excelでコピーした範囲（作目・面積）を、先頭のセルに貼り付けできます。";
+      wrap.appendChild(table);
+      wrap.appendChild(info);
+      wrap.appendChild(hint);
+      sync();
+      return wrap;
+    }
+
+    // ③の「項目；現状；目標・措置」表。Excel範囲を貼り付け、各セルを個別に編集できる
+    function buildConsistencyGrid(r) {
+      const t = r[4];
+      const wrap = document.createElement("div");
+      const table = document.createElement("table");
+      table.className = "grid consistency-grid";
+      const head = document.createElement("tr");
+      ["項目", "現状", "目標・措置"].forEach((label) => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        head.appendChild(th);
+      });
+      table.appendChild(head);
+      const inputs = [];
+      const setRowHeight = (rowKey, height) => {
+        document.querySelectorAll("textarea[data-consistency-row]").forEach((input) => {
+          if (input.dataset.consistencyRow === rowKey) input.style.height = `${height}px`;
+        });
+      };
+      const sync = () => {
+        t.values = inputs.map((row) => row.map((input) => input.value));
+        const valuesByCell = new Map();
+        t.blocks.forEach((block, i) => block.cols.forEach((col, j) => {
+          valuesByCell.set(`${block.r}:${col}`, t.values[i][j]);
+        }));
+        for (const report of OUT_REP) {
+          const other = report[4];
+          if (!other || other.kind !== "consistency" || other.ws !== t.ws) continue;
+          other.blocks.forEach((block, i) => block.cols.forEach((col, j) => {
+            const key = `${block.r}:${col}`;
+            if (!valuesByCell.has(key)) return;
+            const value = valuesByCell.get(key);
+            other.values[i][j] = value;
+            document.querySelectorAll("textarea[data-consistency-cell]").forEach((input) => {
+              if (input.dataset.consistencyCell === `${other.ws}|${key}` && input.value !== value)
+                input.value = value;
+            });
+          }));
+          report[5] = other.values.map((row) => row.join("；")).join("\n");
+        }
+      };
+
+      t.blocks.forEach((block, i) => {
+        const tr = document.createElement("tr");
+        const rowKey = `${t.ws}|${block.r}`;
+        tr.dataset.consistencyRow = rowKey;
+        inputs[i] = [];
+        for (let j = 0; j < 3; j++) {
+          const td = document.createElement("td");
+          const input = document.createElement("textarea");
+          input.rows = 2;
+          input.dataset.consistencyCell = `${t.ws}|${block.r}:${block.cols[j]}`;
+          input.dataset.consistencyRow = rowKey;
+          input.value = (t.values[i] && t.values[i][j]) ?? block.orig[j] ?? "";
+          input.addEventListener("input", sync);
+          input.addEventListener("paste", (ev) => {
+            const text = (ev.clipboardData || window.clipboardData).getData("text");
+            if (!/[\t\n]/.test(text)) return;
+            ev.preventDefault();
+            const lines = text.replace(/\r/g, "").replace(/\n+$/, "").split("\n").map((line) => line.split("\t"));
+            lines.forEach((cols, rowOffset) => cols.forEach((value, colOffset) => {
+              const target = inputs[i + rowOffset] && inputs[i + rowOffset][j + colOffset];
+              if (target) target.value = value.trim();
+            }));
+            sync();
+          });
+          inputs[i][j] = input;
+          td.appendChild(input);
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+
+        const resizeTr = document.createElement("tr");
+        resizeTr.className = "resize-row";
+        const resizeTd = document.createElement("td");
+        resizeTd.colSpan = 3;
+        const resizer = document.createElement("div");
+        resizer.className = "consistency-row-resizer";
+        resizer.title = "ドラッグして行の高さを変更";
+        resizer.setAttribute("role", "separator");
+        resizer.setAttribute("aria-orientation", "horizontal");
+        resizer.setAttribute("aria-label", "行の高さを変更");
+        resizer.addEventListener("pointerdown", (ev) => {
+          ev.preventDefault();
+          const startY = ev.clientY;
+          const startHeight = inputs[i][0].getBoundingClientRect().height;
+          resizer.setPointerCapture(ev.pointerId);
+          const move = (moveEv) => setRowHeight(rowKey, Math.max(64, startHeight + moveEv.clientY - startY));
+          const stop = () => {
+            resizer.removeEventListener("pointermove", move);
+            resizer.removeEventListener("pointerup", stop);
+            resizer.removeEventListener("pointercancel", stop);
+          };
+          resizer.addEventListener("pointermove", move);
+          resizer.addEventListener("pointerup", stop);
+          resizer.addEventListener("pointercancel", stop);
+        });
+        resizeTd.appendChild(resizer);
+        resizeTr.appendChild(resizeTd);
+        table.appendChild(resizeTr);
+      });
+
+      const hint = document.createElement("div");
+      hint.className = "grid-hint";
+      hint.textContent = "Excelでコピーした範囲（項目・現状・目標・措置）を、先頭のセルに貼り付けできます。";
+      wrap.appendChild(table);
+      wrap.appendChild(hint);
+      return wrap;
+    }
+
+    function renderRows() {
+      const groups = groupRows(OUT_REP);
+      const countOf = (k) => groups.filter((g) => g.worst === k).length;
       $("summary").textContent =
-        `目標年度: 令和${ty}年 ／ 自動修正 ${fixed}件 ／ 要記入（チェックが付かない箇所） ${req}件 ／ 手動確認 ${man}件`;
+        `目標年度: 令和${SHOWN_TY}年 ／ 判定項目 ${groups.length}件（結果 ${groups.length}行） ／ 自動修正 ${countOf("自動修正")}件 ／ ` +
+        `要記入（チェックが付かない箇所） ${countOf("要記入")}件 ／ 手動確認 ${countOf("手動確認")}件 ／ 修正不要 ${countOf("OK")}件`;
+
+      // 見出しの並べ替えマーク
+      const heads = document.querySelectorAll("#logHead th");
+      heads.forEach((th, i) => {
+        const mark = SORT.col === i ? (SORT.dir === 1 ? " ▲" : " ▼") : "";
+        th.textContent = th.getAttribute("data-label") + mark;
+      });
 
       const tbody = $("logBody");
       tbody.innerHTML = "";
-      for (const r of rep) {
+      for (const g of sortedGroups()) {
         const tr = document.createElement("tr");
-        [r[0], r[1], r[2], r[3]].forEach((text, i) => {
+        [g.sheet, g.loc, g.multi ? `${g.worst}（${g.rows.length}箇所）` : g.worst, g.content].forEach((text, i) => {
           const td = document.createElement("td");
           td.textContent = text ?? "";
-          if (i === 3) td.style.whiteSpace = "pre-line";   // 内容の改行を表示する
-          if (i === 2) td.className = "kind-" + text;
+          if (i === 3 || g.multi) td.style.whiteSpace = "pre-line";   // 内容の改行・番号を表示する
+          if (i === 2) td.className = "kind-" + g.worst;
           tr.appendChild(td);
         });
 
+        // 修正（手入力）：指摘ごとに入力欄を並べる（複数箇所ある項目は番号付き）
         const td = document.createElement("td");
-        const input = document.createElement("textarea");
-        input.className = "edit";
-        input.rows = 1;
-        input.value = r[5] || "";
-        input.disabled = !r[4];
-        input.placeholder = r[4] ? "修正値を入力（右下をドラッグで拡大可）" : "（入力不可）";
-        input.addEventListener("input", () => { r[5] = input.value; });
-        td.appendChild(input);
+        g.rows.forEach((r, i) => {
+          const wrap = document.createElement("div");
+          if (g.multi) {
+            const no = document.createElement("div");
+            no.textContent = `${i + 1})`;
+            no.style.fontSize = ".75rem";
+            no.style.color = "#555";
+            wrap.appendChild(no);
+          }
+          if (r[4] && r[4].kind === "grid") {
+            wrap.appendChild(buildGrid(r));                    // 作目・面積の表
+          } else if (r[4] && r[4].kind === "consistency") {
+            wrap.appendChild(buildConsistencyGrid(r));          // ③の項目・現状・目標・措置の表
+          } else {
+            const input = document.createElement("textarea");
+            input.className = "edit";
+            input.rows = 1;
+            input.value = r[5] || "";
+            input.disabled = !r[4];
+            input.placeholder = r[4] ? "修正値を入力（右下をドラッグで拡大可）" : "（入力不可）";
+            input.addEventListener("input", () => { r[5] = input.value; });
+            wrap.appendChild(input);
+          }
+          if (g.multi) wrap.style.marginBottom = "4px";
+          td.appendChild(wrap);
+        });
         tr.appendChild(td);
 
         tbody.appendChild(tr);
       }
-      $("resultPanel").hidden = false;
-      $("download").disabled = false;
-      $("dlStatus").textContent = "";
     }
 
     // 修正入力を反映して、修正版（.xlsx）をダウンロードする
@@ -1738,35 +2618,53 @@
       try {
         // 1) 手入力の内容を対象セルへ書き込む
         const warns = [];
+        const snap = snapshotValues(OUT_WB);       // 手入力で変わったセルを知るための控え
         for (const r of OUT_REP) {
           const t = r[4];
           if (!t) continue;
           const val = r[5] == null ? "" : String(r[5]);
 
+          // 作目・面積の表（申請書１）：変更した作目名・面積だけを書き換え、赤字にする
+          if (t.kind === "grid") {
+            const wsG = OUT_WB.getWorksheet(t.ws);
+            if (!wsG) continue;
+            const lines = val.split("\n").map((l) => l.split("\t"));
+            let changed = false;
+            t.rows.forEach((row, i) => {
+              const parts = lines[i] || [];
+              const nm = (parts[0] ?? "").trim();
+              const ar = (parts[1] ?? "").trim();
+              const red = { color: { argb: "FFFF0000" } };
+              if (nm !== row.name) {
+                const c = wsG.getCell(row.r, row.nameC);
+                c.value = nm === "" ? null : nm;
+                setFont(c, { ...(c.font || {}), ...red });
+                changed = true;
+              }
+              if (ar !== row.area) {
+                const n = Number(ar.replace(/,/g, ""));
+                const c = wsG.getCell(row.r, row.areaC);
+                c.value = ar === "" ? null : (row.numeric && !isNaN(n) ? n : ar);
+                setFont(c, { ...(c.font || {}), ...red });
+                changed = true;
+              }
+            });
+            if (changed) OUT_WB.calcProperties = { ...(OUT_WB.calcProperties || {}), fullCalcOnLoad: true };   // 合計などの数式を開いたときに再計算
+            continue;
+          }
+
           // ③の一貫性：1行＝1項目、「項目；現状；目標・措置」。変更した部分だけ書き換える
           if (t.kind === "consistency") {
-            if (val === t.orig) continue;
             const wsC = OUT_WB.getWorksheet(t.ws);
             if (!wsC) continue;
-            const lines = val.split(/\r?\n/);
-            while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
-            if (lines.length !== t.blocks.length) {
-              warns.push(`③の修正は反映していません（行数を${t.blocks.length}行のまま、1項目を1行で入力してください）`);
-              continue;
-            }
-            lines.forEach((ln, i) => {
-              const parts = ln.split("；");
-              if (parts.length !== 3) {
-                warns.push(`③の${i + 1}行目は反映していません（「項目；現状；目標・措置」の「；」は2つにしてください）`);
-                return;
-              }
-              const b = t.blocks[i];
+            t.blocks.forEach((b, i) => {
+              const parts = t.values[i] || b.orig;
               parts.forEach((p, k) => {
                 const np = p.trim();
                 if (np === b.orig[k]) return;
                 const cc = wsC.getCell(b.r, b.cols[k]);
                 cc.value = np === "" ? null : np;
-                cc.font = { ...(cc.font || {}), color: { argb: "FFFF0000" } };   // 差し替えた部分は赤字
+                setFont(cc, { ...(cc.font || {}), color: { argb: "FFFF0000" } });   // 差し替えた部分は赤字
               });
             });
             continue;
@@ -1792,14 +2690,23 @@
               // 元が数値のセル（経営面積合計など）は数値のまま書く。文字のセルは文字として書く
               cell.value = t.numeric && n !== null ? n : val;
             }
-            cell.font = { ...(cell.font || {}), color: { argb: "FFFF0000" } };   // 差し替えた部分は赤字
+            setFont(cell, { ...(cell.font || {}), color: { argb: "FFFF0000" } });   // 差し替えた部分は赤字
           } else {
             // 記入漏れ用の空欄：数字なら数値、それ以外は文字として書き、黒字にする
             const trimmed = val.trim();
             const n = toNum(trimmed);
             cell.value = n !== null ? n : trimmed;
-            cell.font = { color: { argb: "FFFF0000" } };   // 差し替えた部分は赤字
+            setFont(cell, { color: { argb: "FFFF0000" } });   // 差し替えた部分は赤字
           }
+        }
+
+        // 手入力で変わったセルに依存する数式（合計・「現在」「目標」の参照や販売額など）の保存値を計算し直す
+        const changedCells = changedSince(OUT_WB, snap);
+        if (changedCells.length) {
+          OUT_WB.calcProperties = { ...(OUT_WB.calcProperties || {}), fullCalcOnLoad: true };   // 開いたときにExcelでも再計算
+          const rc = recalcDependents(OUT_WB, changedCells);
+          if (rc.failed.length)
+            warns.push(`一部の数式は保存値を更新できませんでした（Excelで開くと再計算されます）：${rc.failed.slice(0, 5).join("、")}${rc.failed.length > 5 ? " ほか" : ""}`);
         }
 
         // 2) チェック結果シートを、修正列付きで作り直す
