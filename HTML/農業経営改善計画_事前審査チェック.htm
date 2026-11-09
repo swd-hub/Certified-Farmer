@@ -39,6 +39,8 @@
     table.consistency-grid th:nth-child(1), table.consistency-grid td:nth-child(1) { width: 22%; }
     table.consistency-grid th:nth-child(2), table.consistency-grid td:nth-child(2) { width: 26%; }
     table.consistency-grid th:nth-child(3), table.consistency-grid td:nth-child(3) { width: 52%; }
+    table.consistency-grid.cols2 th:nth-child(1), table.consistency-grid.cols2 td:nth-child(1) { width: 30%; }
+    table.consistency-grid.cols2 th:nth-child(2), table.consistency-grid.cols2 td:nth-child(2) { width: 70%; }
     .grid-info { font-size: .78rem; margin: 2px 0; }
     .grid-hint { font-size: .72rem; color: #666; }
     table.result-table td { overflow-wrap: anywhere; }
@@ -51,6 +53,12 @@
     textarea.edit { display: block; width: 100%; min-width: 180px; min-height: 2.2em; font-size: .85rem; font-family: inherit; padding: 4px 6px; border: 1px solid #bbb; border-radius: 4px; resize: both; overflow: auto; }
     textarea.edit:disabled { background: #f5f5f5; resize: none; }
     footer { text-align: center; font-size: .8rem; color: #777; padding: 20px 16px; }
+    /* たまにしか使わないボタン：小さく控えめにして、横に並べる（押し間違い防止） */
+    .sub-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0; }
+    button.btn-sub { background-color: #fff; color: #666; border: 1px solid #bbb; padding: 2px 8px; font-size: .75rem; border-radius: 4px; margin: 0; }
+    button.btn-sub:hover:not(:disabled) { background-color: #f1f1f1; color: #333; }
+    button.btn-sub:disabled { background-color: #f5f5f5; color: #aaa; border-color: #ddd; }
+    .sub-actions .note { margin: 0; font-size: .75rem; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
     .file-btn { display: inline-block; background-color: #43a047; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: .92rem; cursor: pointer; margin-right: 8px; }
     .file-btn:hover { background-color: #2e7d32; }
@@ -71,9 +79,11 @@
       <span id="clFileName" class="fname">未選択</span>
       <p class="note">UTF-8の .txt を選んでください。「□」で始まる行が判定項目になります。項目の文言は「チェックが付く（正しい）状態」を表しています。数字（例：320万円）を書き換えて取り込み直すと、判定基準が変わります。</p>
       <p class="note" id="clSaved"></p>
-      <button type="button" id="clClear" hidden>保存したチェック票を消去</button>
       <p class="msg" id="clMsg"></p>
-      <button type="button" id="toggleRules" hidden>判定項目を表示</button>
+      <div class="sub-actions">
+        <button type="button" id="toggleRules" class="btn-sub" hidden>判定項目を表示</button>
+        <button type="button" id="clClear" class="btn-sub" hidden>保存したチェック票を消去</button>
+      </div>
       <div class="table-wrap" id="ruleWrap" hidden>
         <table>
           <thead><tr><th>行</th><th>区分</th><th>チェック内容</th><th>判定</th></tr></thead>
@@ -86,8 +96,10 @@
       <h2>2. 申請書（.xlsx）を選んで実行</h2>
       <input type="file" id="file" accept=".xlsx">
       <p class="note">※ 処理はこのブラウザ内で行われ、ファイルは外部に送信されません。</p>
-      <button id="openXlsx" disabled>申請書をエクセルで開く</button>
-      <p class="note">ブラウザからExcelを直接起動することはできないため、選択中の申請書をダウンロードします。ダウンロードされたファイルをダブルクリックするとExcelで開きます。</p>
+      <div class="sub-actions">
+        <button id="openXlsx" class="btn-sub" disabled>申請書をエクセルで開く</button>
+        <span class="note">選択中の申請書をダウンロードします（ダブルクリックでExcelで開きます）</span>
+      </div>
       <button id="run" disabled>チェックして修正版を作成</button>
       <div id="status"></div>
     </section>
@@ -155,11 +167,11 @@
 
     // 範囲の開始・終了判定（セル文字列を正規化して判定）
     const SEC2_START = (s) => s.startsWith("②");
-    const SEC2_END = (s) => /^(（３）|③|④|⑤|（参考）|（別紙）|【)/.test(s);
+    const SEC2_END = (s) => /^(（３）|③|④|⑤|（参考）|（別紙）|【(?!要記入))/.test(s);
     const SEC_A_START = (s) => s.startsWith("ア") && s.includes("農用地");
-    const SEC_A_END = (s) => /^(イ|③|④|⑤|（参考）|（別紙）|【)/.test(s);
+    const SEC_A_END = (s) => /^(イ|③|④|⑤|（参考）|（別紙）|【(?!要記入))/.test(s);
     const SEC_I_START = (s) => s.startsWith("イ") && s.includes("農業生産施設");
-    const SEC_I_END = (s) => /^(③|④|⑤|（参考）|（別紙）|【)/.test(s);
+    const SEC_I_END = (s) => /^(③|④|⑤|（参考）|（別紙）|【(?!要記入))/.test(s);
     const SEC_REF_START = (s) => s.startsWith("（参考）");
     const SEC_REF_END = (s) => /^(（別紙）|【|①|②|③|④|⑤)/.test(s);
 
@@ -538,7 +550,7 @@
     // targetC を指定した場合：その列のセル（例：措置、経営面積合計）が対象になり、修正欄に現在の内容が入る。
     // 指定しない場合：右端の【要記入】メモ欄が対象（修正欄は空）。
     // どちらの場合も、右端に【要記入】メモを書いて目印にする。
-    function flagCell(ws, rep, r, text, targetC = null, lockText = null, hideMemo = false, eraseWord = false) {
+    function flagCell(ws, rep, r, text, targetC = null, lockText = null, hideMemo = false, eraseWord = false, locC = null) {
       if (!noteCol.has(ws.name)) noteCol.set(ws.name, ws.columnCount + 2);
       let col = noteCol.get(ws.name);
       while (getVal(ws.getCell(r, col)) !== null) col++;
@@ -548,7 +560,7 @@
 
       if (lockText) {
         // 手修正させない行：修正欄は入力不可にして、案内文だけを表示する（セルは書き換えない）
-        const where = targetC ? (hideMemo ? ws.getCell(r, targetC).address : `${ws.getCell(r, targetC).address}（メモ: ${memo.address}）`) : memo.address;
+        const where = (targetC || locC) ? ws.getCell(r, targetC || locC).address : memo.address;
         rep.push([ws.name, where, "要記入", text, null, lockText]);
       } else if (targetC && eraseWord) {
         // 自動で消去できる行：修正欄に「消去」と表示し、そのままダウンロードすると対象セルを空にする
@@ -562,9 +574,9 @@
         const orig = getVal(tcell);
         const origText = orig === null ? "" : String(orig);
         const target = { ws: ws.name, r, c: targetC, orig: origText, numeric: typeof orig === "number" };
-        rep.push([ws.name, `${tcell.address}（メモ: ${memo.address}）`, "要記入", text, target, origText]);
+        rep.push([ws.name, tcell.address, "要記入", text, target, origText]);
       } else {
-        rep.push([ws.name, ws.getCell(r, 1).address === undefined ? `${r}行目` : `${memo.address}`, "要記入", text, { ws: ws.name, r, c: col }, ""]);
+        rep.push([ws.name, locC ? ws.getCell(r, locC).address : memo.address, "要記入", text, { ws: ws.name, r, c: col }, ""]);
       }
     }
 
@@ -1145,7 +1157,7 @@
         if (!anchor) continue;
         const anchorAddr = ws.getCell(anchor.r, anchor.c).address;
 
-        const SECTION = /^(①|②|③|④|⑤|（参考）|（別紙）|【)/;
+        const SECTION = /^(①|②|③|④|⑤|（参考）|（別紙）|【(?!要記入))/;
         const ends = all.filter((x) => x.r > anchor.r && SECTION.test(norm(x.v))).map((x) => x.r);
         const endRow = ends.length ? Math.min(...ends) : ws.rowCount + 1;
         const inside = all.filter((x) => x.r > anchor.r && x.r < endRow);
@@ -1442,7 +1454,7 @@
               if (ctx.corp && rule.corpMax !== undefined) {
                 const n = countCircles(ws, p.r, p.c);
                 if (n > rule.corpMax)
-                  flagCell(ws, ctx.rep, p.r, `法人経営では「${name}」に○がないためチェックが付きません`);
+                  flagCell(ws, ctx.rep, p.r, `法人経営では「${name}」に○があるためチェックが付きません（○を消す）`, null, null, false, false, p.c);
                 continue;
               }
 
@@ -1479,7 +1491,7 @@
             ctx.rep.push(manualRow(ctx, rule.top, item.text, "図形を読み取れないため、作付体系の図の有無を手動で確認"));
             continue;
           }
-          flagCell(ws, ctx.rep, 1, "２．作付体系の図が見つかりません", null, "２．作付体系の図を加える");
+          flagCell(ws, ctx.rep, 1, "２．作付体系の図が見つかりません", null, "２．作付体系の図を加える", false, false, 1);
         }
       },
 
@@ -1491,13 +1503,16 @@
           if (!anchor) continue;
 
           // 次のセクション見出しの行までを対象範囲とする
-          const SECTION = /^(①|②|③|④|⑤|（参考）|（別紙）|【)/;
+          const SECTION = /^(①|②|③|④|⑤|（参考）|（別紙）|【(?!要記入))/;
           const ends = all.filter((x) => x.r > anchor.r && SECTION.test(norm(x.v))).map((x) => x.r);
           const endRow = ends.length ? Math.min(...ends) : ws.rowCount + 1;
-          const inside = all.filter((x) => x.r > anchor.r && x.r < endRow);
+          // 見出し（④など）と同じ列から右側だけを対象にする（左隣の③の表を拾わない）
+          const inside = all.filter((x) => x.r > anchor.r && x.r < endRow && x.c >= anchor.c);
 
           const hdr = inside.find((x) => norm(x.v) === "項目");
-          const meas = inside.find((x) => norm(x.v) === "措置");
+          const meas = hdr && inside
+            .filter((x) => x.r === hdr.r && x.c > hdr.c && norm(x.v) === "措置")
+            .sort((a, b) => a.c - b.c)[0];
           if (!hdr || !meas) {
             ctx.rep.push(manualRow(ctx, rule.top, rule.text, "「項目」「措置」の見出しが見つからないため手動で確認"));
             continue;
@@ -1515,13 +1530,41 @@
             continue;
           }
 
+          const bad = [];
           for (const x of inside.filter((y) => y.r > hdr.r && y.c === meas.c)) {
             const text = norm(x.v);
             if (!text || HEAD.includes(text) || isNote(x.v)) continue;
-            if (!terms.some((t) => text.includes(t)))
-              // 対象は措置セル本体（修正欄に現在の文面が入る）
-              flagCell(ws, ctx.rep, x.r,
-                `措置に、同じ表の項目（${terms.join("、")}）のいずれも含まれていません`, meas.c);
+            if (!terms.some((t) => text.includes(t))) bad.push(x);
+          }
+          if (!bad.length) continue;
+
+          // 指摘は1行にまとめ、修正欄には「項目；措置」の表を出す（③と同じ。編集して修正版に反映できる）
+          const flat = (v) => (v == null ? "" : String(v).replace(/\r?\n/g, " ").replace(/；/g, "、").trim());
+          const blocks = [];
+          for (const x of inside.filter((y) => y.r > hdr.r && y.c === hdr.c)) {
+            const cell = ws.getCell(x.r, x.c);
+            if (cell.master && cell.master !== cell) continue;
+            const name = norm(x.v);
+            if (!name || HEAD.includes(name)) continue;
+            const rc = regionCounts(ws, { r: x.r, c: x.c }, ctx);
+            const mc = ws.getCell(x.r, meas.c);
+            const mm = mc.master || mc;                            // 結合された措置欄は左上のセルが実体
+            blocks.push({ r: x.r, cols: [hdr.c, mm.col], rows: [x.r, mm.row], marked: !!(rc && rc.tgt >= 1),
+              orig: [flat(getVal(cell)), flat(getVal(mm))] });
+          }
+          // 目標に○が付いた項目の行だけを出す（1つも付いていなければ、表の全項目を出す）
+          if (blocks.some((b) => b.marked)) {
+            for (let i = blocks.length - 1; i >= 0; i--) if (!blocks[i].marked) blocks.splice(i, 1);
+          }
+          const before = ctx.rep.length;
+          flagCell(ws, ctx.rep, bad[0].r,
+            `措置に、同じ表の項目（${terms.join("、")}）のいずれも含まれていません`, meas.c);
+          if (blocks.length && ctx.rep.length > before) {
+            const row = ctx.rep[ctx.rep.length - 1];
+            const joined = blocks.map((b) => b.orig.join("；")).join("\n");
+            row[4] = { ws: ws.name, kind: "consistency", labels: ["項目", "措置"], blocks,
+              values: blocks.map((b) => b.orig.slice()), orig: joined };
+            row[5] = joined;
           }
         }
       },
@@ -1563,8 +1606,21 @@
         for (const ws of sheetsFor(ctx, rule))
           for (const p of findCells(ws, exactRx("主たる従事者（h）"))) {
             const ns = numsRight(ws, p.r, p.c);
-            if (ns.length && Math.abs(ns[0].n - ref) > 0.01)
-              flagCell(ws, ctx.rep, p.r, `申請書１の値 ${ref}h と一致しないためチェックが付きません`);
+            if (!ns.length) continue;
+            let val = ns[0].n;
+            // 目標に限り、2000時間を超えているときは2000時間に自動修正する
+            if ((rule.sheet || []).includes("目標") && val > 2000) {
+              const cell = ws.getCell(p.r, ns[0].c);
+              cell.value = 2000;
+              setFont(cell, { ...(cell.font || {}), color: { argb: "FFFF0000" } });   // 自動で直した部分は赤字
+              ctx.rep.push([ws.name, cell.address, "自動修正",
+                `「主たる従事者（h）」の値（${Math.round(val * 10) / 10}h）が2000時間を超えているため、2000時間に修正しました`,
+                { ws: ws.name, r: p.r, c: ns[0].c, orig: "2000", numeric: true }, "2000"]);
+              val = 2000;
+            }
+            if (Math.abs(val - ref) > 0.01)
+              flagCell(ws, ctx.rep, p.r,
+                `「主たる従事者（h）」の値（${Math.round(val * 10) / 10}h）が、申請書１の「主たる従事者１人当たりの年間労働時間」（${Math.round(ref * 10) / 10}h）と一致しないためチェックが付きません`, ns[0].c);
           }
       },
 
@@ -1708,7 +1764,7 @@
         // 現状・見通しの列のうち、どちらかが一致していればよい
         if (!cnts.includes(main))
           flagCell(mt.ws, ctx.rep, mt.hdr.r,
-            `主たる従事者の○の数（${cnts.join("・")}）が①（２）の人数（${main}）と一致しません`);
+            `主たる従事者の○の数（${cnts.join("・")}）が①（２）の人数（${main}）と一致しません`, null, null, false, false, mt.hdr.c);
       },
 
       // 行47：年間農業従事時間の平均 = ①（２）の年間労働時間（現状・目標のいずれか）
@@ -1736,7 +1792,7 @@
           const avg = vals.reduce((a, v) => a + v, 0) / vals.length;
           if (Math.abs(avg - ref.ns[i]) > 1)
             flagCell(mt.ws, ctx.rep, mt.hdr.r,
-              `${labels[i] || ""}の主たる従事者の年間農業従事時間の平均（${Math.round(avg * 10) / 10}h）が①（２）の年間労働時間（${Math.round(ref.ns[i] * 10) / 10}h）と一致しません`);
+              `${labels[i] || ""}の主たる従事者の年間農業従事時間の平均（${Math.round(avg * 10) / 10}h）が①（２）の年間労働時間（${Math.round(ref.ns[i] * 10) / 10}h）と一致しません`, null, null, false, false, mt.hdr.c);
         }
       },
 
@@ -1758,19 +1814,19 @@
             for (const x of all.filter((y) => y.r === rowHdr.r && y.c > rowHdr.c).sort((a, b) => a.c - b.c)) {
               if (/^合計$|^計$/.test(norm(x.v))) break;
               if (toNum(x.v) !== null || isNote(x.v)) continue;
-              names.push({ r: x.r, n: norm(x.v) });
+              names.push({ r: x.r, c: x.c, n: norm(x.v) });
             }
           } else {
             const hdr = all.find((x) => /^作目名/.test(norm(x.v)));
             if (!hdr) { fallback(ctx, rule, `${ws.name}に「作目」の欄が見つかりません`); continue; }
             names = all
               .filter((x) => x.c === hdr.c && x.r > hdr.r && x.r <= hdr.r + 30 && toNum(x.v) === null && !isNote(x.v))
-              .map((x) => ({ r: x.r, n: norm(x.v) }));
+              .map((x) => ({ r: x.r, c: x.c, n: norm(x.v) }));
           }
           names = names.filter((o) => !skip(o));
           for (const nm of names)
             if (!matches(nm.n))
-              flagCell(ws, ctx.rep, nm.r, `作目名「${nm.n}」が②の作目名・部門名に見当たりません`);
+              flagCell(ws, ctx.rep, nm.r, `作目名「${nm.n}」が②の作目名・部門名に見当たりません`, nm.c);
         }
       },
 
@@ -1838,7 +1894,7 @@
               const y = toNum(getVal(ws.getCell(yRow.r, nm.c)));
               if (y !== null && y !== 0 && !sameScale(e.perArea, y))
                 flagCell(ws, ctx.rep, yRow.r,
-                  `「${nm.n}」の${yRow.v}（${y}）が生産量÷作付面積（${r2(e.perArea)}）と一致しません（単位も確認）`);
+                  `「${nm.n}」の${yRow.v}（${y}）が生産量÷作付面積（${r2(e.perArea)}）と一致しません（単位も確認）`, nm.c);
             }
             if (e.kind === "live" && hRow) {
               const y = toNum(getVal(ws.getCell(hRow.r, nm.c)));
@@ -1846,10 +1902,10 @@
               if (/繁殖/.test(nm.n) || /繁殖/.test(e.key)) {
                 if (e.head !== null && y > e.head)
                   flagCell(ws, ctx.rep, hRow.r,
-                    `「${nm.n}」の${hRow.v}（${y}）が②の飼養頭数（${e.head}）を超えています`);
+                    `「${nm.n}」の${hRow.v}（${y}）が②の飼養頭数（${e.head}）を超えています`, nm.c);
               } else if (e.perHead !== null && !sameScale(e.perHead, y)) {
                 flagCell(ws, ctx.rep, hRow.r,
-                  `「${nm.n}」の${hRow.v}（${y}）が生産量÷飼養頭数（${r2(e.perHead)}）と一致しません（単位も確認）`);
+                  `「${nm.n}」の${hRow.v}（${y}）が生産量÷飼養頭数（${r2(e.perHead)}）と一致しません（単位も確認）`, nm.c);
               }
             }
           }
@@ -1895,14 +1951,16 @@
             const st = farmTypeState(boxes, half, label);
             if (!st.found) { ctx.rep.push(manualRow(ctx, rule.top, text, `申請書１に「${label}」のチェック欄が見つかりません`)); return; }
             const cell = boxes.ws.getCell(st.cell.r, st.cell.c);
-            const before = ctx.rep.length;
-            flagCell(boxes.ws, ctx.rep, st.cell.r, text, st.cell.c);
-            // 修正欄には、チェックを付けた後の文字を入れる（同じセルへの複数の指摘は積み重ねる）
+            // チェックを付けた後の文字に自動で書き換える（同じセルへの複数の指摘は積み重ねる）
             const key = boxes.ws.name + "!" + cell.address + "!" + half;
             const cur = mainCropEdits.get(key) ?? st.text;
             const next = cur.replace(new RegExp("□(\\s*" + looseRx(label) + ")"), "☑$1");
             mainCropEdits.set(key, next);
-            if (ctx.rep.length > before) ctx.rep[ctx.rep.length - 1][5] = next;
+            cell.value = next;
+            setFont(cell, { ...(cell.font || {}), color: { argb: "FFFF0000" } });   // 自動で直した部分は赤字
+            // 修正欄には書き換え後の文字を表示（そのまま修正版に反映済み。手で直せば、その内容で上書きする）
+            ctx.rep.push([boxes.ws.name, cell.address, "自動修正", `${text}（自動でチェックを付けました）`,
+              { ws: boxes.ws.name, r: st.cell.r, c: st.cell.c, orig: next, numeric: false }, next]);
           };
 
           const must = Object.keys(lower).filter((c) => lower[c] > limit);
@@ -1987,13 +2045,13 @@
           const ev = rule.idx === 0 ? emp.cur : emp.tgt;
           if (!wv) continue;                       // 雇用労賃なし
           if (!ev) {
-            flagCell(ws, ctx.rep, w.r, `雇用労賃（${wv.toLocaleString()}千円）があるのに、（参考）の雇用者の人員数が0または未記入です`);
+            flagCell(ws, ctx.rep, w.r, `雇用労賃（${wv.toLocaleString()}千円）があるのに、（参考）の雇用者の人員数が0または未記入です`, null, null, false, false, w.c);
             continue;
           }
           const avg = wv / ev;
           if (avg >= rule.limit * rule.scale)
             flagCell(ws, ctx.rep, w.r,
-              `雇用労賃の平均（${Math.round(avg).toLocaleString()}千円/人）が${rule.limit}万円以上のためチェックが付きません`);
+              `雇用労賃の平均（${Math.round(avg).toLocaleString()}千円/人）が${rule.limit}万円以上のためチェックが付きません`, null, null, false, false, w.c);
         }
       },
 
@@ -2014,7 +2072,7 @@
             if (!num || ref[key] === null) continue;
             const v = toNum(num.v);
             if (v !== ref[key])
-              flagCell(ws, ctx.rep, lab.r, `「${label}」の人員数（${v}）が（参考）経営の構成の人数（${ref[key]}）と一致しません`);
+              flagCell(ws, ctx.rep, lab.r, `「${label}」の人員数（${v}）が（参考）経営の構成の人数（${ref[key]}）と一致しません`, num.c);
           }
         }
       },
@@ -2082,7 +2140,7 @@
           const key = norm(n);
           if (ownNames.some((o) => o.includes(key) || key.includes(o))) continue;
           flagCell(own, ctx.rep, hdr ? hdr.r : 1,
-            `取得計画の「${n}」が【別紙】機械・施設所有状況の機械・施設名に加わっていません`, null, "エクセルを修正する");
+            `取得計画の「${n}」が【別紙】機械・施設所有状況の機械・施設名に加わっていません`, null, "エクセルを修正する", false, false, hdr ? hdr.c : null);
         }
       },
 
@@ -2448,13 +2506,16 @@
     }
 
     // ③の「項目；現状；目標・措置」表。Excel範囲を貼り付け、各セルを個別に編集できる
+    const rowOf = (block, j) => (block.rows ? block.rows[j] : block.r);   // 列ごとの行（結合セル対応）。無ければ行は共通
     function buildConsistencyGrid(r) {
       const t = r[4];
       const wrap = document.createElement("div");
       const table = document.createElement("table");
       table.className = "grid consistency-grid";
       const head = document.createElement("tr");
-      ["項目", "現状", "目標・措置"].forEach((label) => {
+      const labels = t.labels || ["項目", "現状", "目標・措置"];
+      table.classList.add(`cols${labels.length}`);
+      labels.forEach((label) => {
         const th = document.createElement("th");
         th.textContent = label;
         head.appendChild(th);
@@ -2470,13 +2531,15 @@
         t.values = inputs.map((row) => row.map((input) => input.value));
         const valuesByCell = new Map();
         t.blocks.forEach((block, i) => block.cols.forEach((col, j) => {
-          valuesByCell.set(`${block.r}:${col}`, t.values[i][j]);
+          const k = `${rowOf(block, j)}:${col}`;
+          // 結合セルを複数行が共有する場合は、変更された値を優先する（変更されていない行の値で上書きしない）
+          if (!valuesByCell.has(k) || t.values[i][j] !== block.orig[j]) valuesByCell.set(k, t.values[i][j]);
         }));
         for (const report of OUT_REP) {
           const other = report[4];
           if (!other || other.kind !== "consistency" || other.ws !== t.ws) continue;
           other.blocks.forEach((block, i) => block.cols.forEach((col, j) => {
-            const key = `${block.r}:${col}`;
+            const key = `${rowOf(block, j)}:${col}`;
             if (!valuesByCell.has(key)) return;
             const value = valuesByCell.get(key);
             other.values[i][j] = value;
@@ -2494,11 +2557,11 @@
         const rowKey = `${t.ws}|${block.r}`;
         tr.dataset.consistencyRow = rowKey;
         inputs[i] = [];
-        for (let j = 0; j < 3; j++) {
+        for (let j = 0; j < labels.length; j++) {
           const td = document.createElement("td");
           const input = document.createElement("textarea");
           input.rows = 2;
-          input.dataset.consistencyCell = `${t.ws}|${block.r}:${block.cols[j]}`;
+          input.dataset.consistencyCell = `${t.ws}|${rowOf(block, j)}:${block.cols[j]}`;
           input.dataset.consistencyRow = rowKey;
           input.value = (t.values[i] && t.values[i][j]) ?? block.orig[j] ?? "";
           input.addEventListener("input", sync);
@@ -2522,7 +2585,7 @@
         const resizeTr = document.createElement("tr");
         resizeTr.className = "resize-row";
         const resizeTd = document.createElement("td");
-        resizeTd.colSpan = 3;
+        resizeTd.colSpan = labels.length;
         const resizer = document.createElement("div");
         resizer.className = "consistency-row-resizer";
         resizer.title = "ドラッグして行の高さを変更";
@@ -2551,7 +2614,7 @@
 
       const hint = document.createElement("div");
       hint.className = "grid-hint";
-      hint.textContent = "Excelでコピーした範囲（項目・現状・目標・措置）を、先頭のセルに貼り付けできます。";
+      hint.textContent = `Excelでコピーした範囲（${labels.join("・")}）を、先頭のセルに貼り付けできます。`;
       wrap.appendChild(table);
       wrap.appendChild(hint);
       return wrap;
@@ -2670,7 +2733,7 @@
               parts.forEach((p, k) => {
                 const np = p.trim();
                 if (np === b.orig[k]) return;
-                const cc = wsC.getCell(b.r, b.cols[k]);
+                const cc = wsC.getCell(rowOf(b, k), b.cols[k]);
                 cc.value = np === "" ? null : np;
                 setFont(cc, { ...(cc.font || {}), color: { argb: "FFFF0000" } });   // 差し替えた部分は赤字
               });
