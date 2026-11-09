@@ -1426,6 +1426,16 @@
       min(rule, ctx) {
         for (const ws of sheetsFor(ctx, rule))
           for (const p of findCells(ws, exactRx(rule.label))) {
+            const slots = slotCols(ws, p.r, p.c, rule.count);
+            if (slots) {
+              // 現状・目標の欄（K列・O列など）を見て、空欄の欄にだけ要記入を付ける
+              for (const c of slots) {
+                const s = cellState(ws.getCell(p.r, c));
+                if (!s.filled) markMissing(ws, ctx.rep, p.r, c, rule.label);
+              }
+              continue;
+            }
+            // 見出しが見つからないときは、従来どおり右側の数値の数で判定する
             const missing = rule.count - numsRight(ws, p.r, p.c).length;
             if (missing > 0)
               for (const k of emptyCols(ws, p.r, p.c, missing))
@@ -1623,7 +1633,6 @@
                 `「主たる従事者（h）」の値（${Math.round(val * 10) / 10}h）が、申請書１の「主たる従事者１人当たりの年間労働時間」（${Math.round(ref * 10) / 10}h）と一致しないためチェックが付きません`, ns[0].c);
           }
       },
-
       // ---- 追加の自動判定 ----
 
       // 申請書２の経営面積合計（現状・目標）≤ 申請書１②（１）生産の作付面積合計（現状・目標）
