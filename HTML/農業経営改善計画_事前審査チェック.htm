@@ -606,6 +606,16 @@
       return out;
     }
 
+    // 申請書２「経営面積合計」：現状はK列、目標はO列に固定して空欄を判定する（それ以外は null で従来判定へ）
+    function slotCols(ws, r, c, count) {
+      return count === 2 ? [11, 15] : null;   // K=11, O=15
+    }
+
+    // セルに記入があるか（空欄・空白のみは未記入）
+    function cellState(cell) {
+      return { filled: !isBlank(getVal(cell)) };
+    }
+
     function markMissing(ws, rep, r, c, label) {
       const cell = ws.getCell(r, c);
       cell.value = "記入漏れ？";
@@ -2175,6 +2185,7 @@
     let OUT_WB = null;     // 修正前の作業ブック（ダウンロード時に修正を反映）
     let OUT_REP = [];      // チェック結果の行
     let OUT_NAME = "";
+    let ORIG_BUF = null;   // 取り込んだ元ファイル（図形を修正版へ戻すために保持）
 
     function setMsg(text, cls) {
       const el = $("clMsg");
@@ -2330,6 +2341,7 @@
         const file = $("file").files[0];
         if (!CHK) throw new Error("チェック票（テキスト）を取り込んでください。");
 
+        ORIG_BUF = await file.arrayBuffer();
         const wb = new ExcelJS.Workbook();
         await wb.xlsx.load(await file.arrayBuffer());
 
@@ -2757,6 +2769,147 @@
       }
     }
 
+    // ---- 修正版へ元の図形（○など）を戻す ----
+    // ExcelJSは保存時に図形（楕円など）を落としてしまうため、元ファイルの描画データ（drawing）を修正版へ書き戻す
+    async function restoreDrawings(origBuf, outBuf) {
+      const oz = await JSZip.loadAsync(origBuf);
+      const nz = await JSZip.loadAsync(outBuf);
+      const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+      const REL_DRAWING = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
+      const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+      const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escXml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+      const readXml = async (z, p) => {
+        const f = z.file(p);
+        return f ? new DOMParser().parseFromString(await f.async("string"), "application/xml") : null;
+      };
+      const sheetPaths = async (z) => {
+        const wbDoc = await readXml(z, "xl/workbook.xml");
+        const relDoc = await readXml(z, "xl/_rels/workbook.xml.rels");
+        if (!wbDoc || !relDoc) throw new Error("ブックの構造を読めません");
+        const rels = {};
+        for (const r of Array.from(relDoc.getElementsByTagName("Relationship")))
+          rels[r.getAttribute("Id")] = resolvePath("xl/", r.getAttribute("Target"));
+        const m = new Map();
+        for (const s of Array.from(wbDoc.getElementsByTagNameNS("*", "sheet"))) {
+          const p = rels[s.getAttribute("r:id")];
+          if (p) m.set(s.getAttribute("name"), p);
+        }
+        return m;
+      };
+      const relsPathOf = (part) => {
+        const i = part.lastIndexOf("/");
+        return part.slice(0, i + 1) + "_rels/" + part.slice(i + 1) + ".rels";
+      };
+      const relsOf = async (z, part) => ({
+        path: relsPathOf(part),
+        dir: part.slice(0, part.lastIndexOf("/") + 1),
+        doc: await readXml(z, relsPathOf(part))
+      });
+      const drawingRel = (doc) => doc
+        ? Array.from(doc.getElementsByTagName("Relationship")).find((r) => /\/drawing$/.test(r.getAttribute("Type") || ""))
+        : null;
+
+      let ctNew = await nz.file("[Content_Types].xml").async("string");
+      const ctOrig = await oz.file("[Content_Types].xml").async("string");
+      const addCT = (xml) => { ctNew = ctNew.replace("</Types>", xml + "</Types>"); };
+      const addTypeFor = (src, dest) => {
+        const ov = ctOrig.match(new RegExp(`<Override[^>]*PartName="/${escRe(src)}"[^>]*/>`));
+        if (ov) {
+          const ct = ov[0].match(/ContentType="([^"]*)"/);
+          if (ct) addCT(`<Override PartName="/${dest}" ContentType="${ct[1]}"/>`);
+          return;
+        }
+        const ext = dest.slice(dest.lastIndexOf(".") + 1);
+        if (new RegExp(`<Default[^>]*Extension="${escRe(ext)}"`, "i").test(ctNew)) return;
+        const df = ctOrig.match(new RegExp(`<Default[^>]*Extension="${escRe(ext)}"[^>]*/>`, "i"));
+        if (df) addCT(df[0]);
+      };
+
+      const oPaths = await sheetPaths(oz);
+      const nPaths = await sheetPaths(nz);
+      const copied = new Map();
+      let restored = 0, seq = 0;
+
+      for (const [name, oSheet] of oPaths) {
+        const nSheet = nPaths.get(name);
+        if (!nSheet) continue;
+        const oRel = await relsOf(oz, oSheet);
+        const oDr = drawingRel(oRel.doc);
+        if (!oDr) continue;
+        const oDrPath = resolvePath(oRel.dir, oDr.getAttribute("Target"));
+        const drFile = oz.file(oDrPath);
+        if (!drFile) continue;
+        const drXml = await drFile.async("string");
+        // 図形（sp・グループ・コネクタ・グラフ）がなければ、ExcelJSが画像を保持するので戻す必要はない
+        if (!/<(\w+:)?(sp|grpSp|cxnSp|graphicFrame)[\s>]/.test(drXml)) continue;
+
+        // 修正版側の描画パーツ（ExcelJSが画像用に作っていればそれを上書き、なければ新規作成）
+        const nRel = await relsOf(nz, nSheet);
+        const nDr = drawingRel(nRel.doc);
+        let nDrPath = nDr ? resolvePath(nRel.dir, nDr.getAttribute("Target")) : null;
+        const isNew = !nDrPath;
+        if (isNew) { do { nDrPath = `xl/drawings/orig_drawing${++seq}.xml`; } while (nz.file(nDrPath)); }
+
+        // 描画パーツの関連ファイル（画像など）を元ファイルから写す
+        const dRel = await relsOf(oz, oDrPath);
+        let relsXml = `${XML_HEAD}<Relationships xmlns="${REL_NS}">`;
+        if (dRel.doc) {
+          for (const r of Array.from(dRel.doc.getElementsByTagName("Relationship"))) {
+            const id = r.getAttribute("Id"), type = r.getAttribute("Type"), tgt = r.getAttribute("Target");
+            if (r.getAttribute("TargetMode") === "External") {
+              relsXml += `<Relationship Id="${id}" Type="${type}" Target="${escXml(tgt)}" TargetMode="External"/>`;
+              continue;
+            }
+            const src = resolvePath(dRel.dir, tgt);
+            const srcFile = oz.file(src);
+            if (!srcFile) continue;
+            let dest = copied.get(src);
+            if (!dest) {
+              dest = src;
+              while (nz.file(dest)) dest = dest.slice(0, dest.lastIndexOf("/") + 1) + "orig_" + dest.slice(dest.lastIndexOf("/") + 1);
+              nz.file(dest, await srcFile.async("uint8array"));
+              addTypeFor(src, dest);
+              copied.set(src, dest);
+            }
+            relsXml += `<Relationship Id="${id}" Type="${type}" Target="/${dest}"/>`;
+          }
+        }
+        relsXml += "</Relationships>";
+        nz.file(nDrPath, drXml);
+        nz.file(relsPathOf(nDrPath), relsXml);
+
+        if (isNew) {
+          addCT(`<Override PartName="/${nDrPath}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`);
+          const rid = "rIdOrigDrawing";
+          const relTag = `<Relationship Id="${rid}" Type="${REL_DRAWING}" Target="/${nDrPath}"/>`;
+          if (nRel.doc) {
+            let sr = await nz.file(nRel.path).async("string");
+            sr = /<\/Relationships>/.test(sr)
+              ? sr.replace("</Relationships>", relTag + "</Relationships>")
+              : sr.replace(/<Relationships([^>]*)\/>/, `<Relationships$1>${relTag}</Relationships>`);
+            nz.file(nRel.path, sr);
+          } else {
+            nz.file(nRel.path, `${XML_HEAD}<Relationships xmlns="${REL_NS}">${relTag}</Relationships>`);
+          }
+          let sx = await nz.file(nSheet).async("string");
+          if (!/<drawing[\s>]/.test(sx)) {
+            if (!/<worksheet[^>]*xmlns:r=/.test(sx))
+              sx = sx.replace(/<worksheet/, '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+            const tag = `<drawing r:id="${rid}"/>`;
+            // drawing 要素は legacyDrawing・tableParts・extLst などより前に置く決まり
+            const m = sx.match(/<(legacyDrawing|legacyDrawingHF|picture|oleObjects|controls|webPublishItems|tableParts|extLst)[\s>\/]/);
+            sx = m ? sx.slice(0, m.index) + tag + sx.slice(m.index) : sx.replace("</worksheet>", tag + "</worksheet>");
+            nz.file(nSheet, sx);
+          }
+        }
+        restored++;
+      }
+      if (!restored) return outBuf;
+      nz.file("[Content_Types].xml", ctNew);
+      return await nz.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+    }
+
     // 修正入力を反映して、修正版（.xlsx）をダウンロードする
     async function downloadEdited() {
       const dl = $("dlStatus");
@@ -2895,13 +3048,19 @@
         OUT_REP.forEach((r) => log.addRow([r[0], r[1], r[2], r[3], r[5] || ""]));
 
         // 3) 保存
-        const buf = await OUT_WB.xlsx.writeBuffer();
+        let buf = await OUT_WB.xlsx.writeBuffer();
+        // ExcelJSが落とす図形（○など）を、元ファイルから修正版へ戻す
+        try {
+          if (ORIG_BUF) buf = await restoreDrawings(ORIG_BUF, buf);
+        } catch (e) {
+          warns.push("図形（○など）を修正版へ引き継げませんでした：" + e.message);
+        }
         download(OUT_NAME, new Blob([buf], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         }));
         if (warns.length) {
           dl.className = "warn";
-          dl.textContent = "修正版をダウンロードしました。ただし次の修正は反映していません。\n" + warns.join("\n");
+          dl.textContent = "修正版をダウンロードしました。ただし次の点にご注意ください。\n" + warns.join("\n");
           dl.style.whiteSpace = "pre-line";
         } else {
           dl.textContent = "修正版をダウンロードしました。";
