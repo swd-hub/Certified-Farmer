@@ -233,7 +233,8 @@
       if (top === "（参考）" && /年間農業従事時間/.test(t))
         return [{ kind: "refHours", sheet: APP_SHEETS }];
       if (isCR && /作目名が②/.test(t))
-        return [{ kind: "cropNames", sheet: sheetCR }];
+        // 各シート先頭の項目に、氏名を申請書１の個人・法人名へ合わせる自動修正を添える
+        return [{ kind: "nameSync", sheet: sheetCR }, { kind: "cropNames", sheet: sheetCR }];
       if (isCR && /単収や出荷頭数/.test(t))
         return [{ kind: "yieldCalc", sheet: sheetCR, idx }];
       if (isCR && /販売額合計の.*を超える作目/.test(t)) {
@@ -315,6 +316,7 @@
         case "refHours": return "自動: 年間農業従事時間の突合";
         case "areaLimit": return "自動: 申請書２の経営面積合計 ≤ 申請書１の作付面積合計（現状・目標を別々に判定）";
         case "cropNames": return "自動: 作目名の突合";
+        case "nameSync": return "自動: 氏名を申請書１の個人・法人名に合わせる";
         case "yieldCalc": return "自動: 単収の計算突合";
         case "wage": return `自動: 雇用労賃の平均（${r.limit}万円未満）`;
         case "staffMatch": return "自動: 人員数の突合";
@@ -380,6 +382,19 @@
         if (n !== null) out.push({ c: k, n });
       }
       return out;
+    }
+
+    // 指定セルより右にある最初の記入（結合セルは左上のみ数える）
+    function firstRight(ws, r, c) {
+      const me = ws.getCell(r, c);
+      for (let k = c + 1; k <= ws.columnCount; k++) {
+        const cell = ws.getCell(r, k);
+        if (cell.master && cell.master !== cell) continue;
+        if (cell.master === me) continue;
+        const v = getVal(cell);
+        if (!isBlank(v)) return { c: k, v };
+      }
+      return null;
     }
 
     function hasRightValue(ws, r, c) {
@@ -1154,8 +1169,11 @@
 
     // 取得計画・機械施設所有状況のシート（名前で判定）
     function planSheet(ctx) {
-      return ctx.wb.worksheets.find((ws) => ws.name.includes("取得"))
-        || ctx.wb.worksheets.find((ws) => ws.name.includes("別紙")) || null;
+      // 取得計画は「農業用機械等の名称」の見出しがあるシート（申請書３など）。
+      // 名前に「別紙」を含むだけで探すと、【別紙】機械所有状況のシートを取り違える
+      return ctx.wb.worksheets.find((ws) => allValues(ws).some((x) => norm(x.v) === "農業用機械等の名称"))
+        || ctx.wb.worksheets.find((ws) => ws.name.includes("取得"))
+        || ctx.wb.worksheets.find((ws) => ws.name.includes("別紙") && !/所有/.test(ws.name)) || null;
     }
     function ownSheet(ctx) {
       const p = planSheet(ctx);
@@ -1427,6 +1445,80 @@
           }
       },
 
+      // 【現在】【目標】シートの氏名（法人は名称）を、申請書１の「個人・法人名」に合わせる
+      nameSync(rule, ctx) {
+        // 基準：申請書１の「個人・法人名」の右にある最初の記入
+        let ref = null;
+        for (const ws of sheetsFor(ctx, { sheet: ["申請書１"] })) {
+          for (const p of findCells(ws, exactRx("個人・法人名"))) {
+            const f = firstRight(ws, p.r, p.c);
+            if (f) { ref = String(f.v).trim(); break; }
+          }
+          if (ref !== null) break;
+        }
+        if (ref === null) return;   // 申請書１が未記入のときは、申請者欄の「記入漏れ」で指摘される
+
+        for (const ws of sheetsFor(ctx, rule)) {
+          const all = allValues(ws);
+          let target = null, oldVal = "", newVal = ref;
+
+          // ① 表の見出し「No.｜氏名」：見出しの下の行（最初の行）が申請者の氏名欄
+          const hdr = all
+            .filter((x) => norm(x.v) === "氏名" && x.c > 1 && (() => {
+              for (let k = x.c - 1; k >= 1; k--)
+                if (/^no\.?$/i.test(norm(getVal(ws.getCell(x.r, k))))) return true;
+              return false;
+            })())
+            .sort((p, q) => p.r - q.r || p.c - q.c)[0];
+          if (hdr) {
+            const hcell = ws.getCell(hdr.r, hdr.c);
+            let r2 = hdr.r + 1;
+            while (ws.getCell(r2, hdr.c).master === hcell) r2++;      // 見出しが縦に結合されている場合は結合の下へ
+            const t = ws.getCell(r2, hdr.c);
+            const m = t.master || t;
+            target = { r: Number(m.row), c: Number(m.col) };
+            oldVal = isBlank(getVal(m)) ? "" : String(getVal(m)).trim();
+          } else {
+            // ② 見出しの右に名前がある様式（「氏名（法人にあっては名称）」など）。上のほうにある見出しを探す
+            const label = all
+              .filter((x) => x.r <= 15 && norm(x.v).length <= 30 &&
+                /氏名|名称|個人・法人名|申請者名|経営体名/.test(norm(x.v)) &&
+                !/代表者|役員|作目|従事|機械|施設|雇用|構成員|家族|品目/.test(norm(x.v)))
+              .sort((p, q) => p.r - q.r || p.c - q.c)[0];
+            if (!label) continue;
+            const lcell = ws.getCell(label.r, label.c);
+            const inl = String(label.v).match(/^([^:：]*[:：])\s*(\S.*)$/);
+            if (inl && !/氏名|名称/.test(norm(inl[2]))) {
+              // 「氏名：○○」のように見出しと同じセルに名前がある場合
+              target = { r: label.r, c: label.c };
+              oldVal = inl[2].trim();
+              newVal = inl[1] + ref;
+            } else {
+              const f = firstRight(ws, label.r, label.c);
+              if (f) {
+                target = { r: label.r, c: f.c };
+                oldVal = String(f.v).trim();
+              } else {
+                // 名前が空欄のとき：見出しの結合範囲の次のセル（結合セルなら左上）に書く
+                let k = label.c + 1;
+                while (k <= ws.columnCount + 1 && ws.getCell(label.r, k).master === lcell) k++;
+                const m = ws.getCell(label.r, k);
+                target = { r: label.r, c: Number((m.master || m).col) };
+              }
+            }
+          }
+          if (!target || norm(oldVal) === norm(ref)) continue;   // 空白の違いは同じ名前とみなす
+
+          const cell = ws.getCell(target.r, target.c);
+          const t0 = cell.master || cell;
+          t0.value = newVal;
+          setFont(t0, { ...(t0.font || {}), color: { argb: "FFFF0000" } });   // 自動で直した部分は赤字
+          ctx.rep.push([ws.name, t0.address, "自動修正",
+            `氏名（${oldVal || "空欄"}）が申請書１の「個人・法人名」（${ref}）と一致しないため、書き換えました`,
+            { ws: ws.name, r: Number(t0.row), c: Number(t0.col), orig: newVal, numeric: false }, newVal]);
+        }
+      },
+
       filled(rule, ctx) {
         for (const ws of sheetsFor(ctx, rule))
           for (const p of findCells(ws, exactRx(rule.label)))
@@ -1514,7 +1606,7 @@
             ctx.rep.push(manualRow(ctx, rule.top, item.text, "図形を読み取れないため、作付体系の図の有無を手動で確認"));
             continue;
           }
-          flagCell(ws, ctx.rep, 1, "２．作付体系の図が見つかりません", null, "２．作付体系の図を加える", false, false, 1);
+          flagCell(ws, ctx.rep, 1, "２．作付体系の図が見つかりません", null, "必要であれば２．作付体系の図を加える", false, false, 1);
         }
       },
 
@@ -2149,8 +2241,15 @@
         const rg = app2 && rowRange(app2, SEC_I_START, SEC_I_END);
         if (!rg || !plan) return fallback(ctx, rule, "②（３）イの表または取得計画のシートが見つかりません");
         const names = rowNames(app2, rg);
-        const planCells = allValues(plan)
-          .filter((x) => toNum(x.v) === null && !isNote(x.v))
+        // 取得計画の「農業用機械等の名称」の列（見出しの下から備考の手前まで）だけを突き合わせる
+        const all = allValues(plan);
+        const hdr = all.find((x) => norm(x.v) === "農業用機械等の名称");
+        const end = hdr && all.find((x) => x.r > hdr.r && /^備考/.test(norm(x.v)));
+        const endRow = end ? end.r : plan.rowCount + 1;
+        const planCells = all
+          .filter((x) => toNum(x.v) === null && !isNote(x.v) &&
+            (!hdr || (x.c === hdr.c && x.r > hdr.r && x.r < endRow)))
+          .filter((x) => { const cell = plan.getCell(x.r, x.c); return !(cell.master && cell.master !== cell); })
           .map((x) => ({ r: x.r, c: x.c, n: norm(x.v) }));
         for (const nm of names)
           for (const p of planCells)
@@ -2341,9 +2440,9 @@
         const file = $("file").files[0];
         if (!CHK) throw new Error("チェック票（テキスト）を取り込んでください。");
 
-        ORIG_BUF = await file.arrayBuffer();
+        ORIG_BUF = await sanitizeBook(await file.arrayBuffer());   // 壊れた名前定義（NaN）を除いて読み込む
         const wb = new ExcelJS.Workbook();
-        await wb.xlsx.load(await file.arrayBuffer());
+        await wb.xlsx.load(ORIG_BUF);
 
         // 図形（楕円など）の位置を読み取る。失敗した場合は文字の○だけで判定する
         let shapes = new Map();
@@ -2769,6 +2868,127 @@
       }
     }
 
+    // ---- 印刷範囲（名前の定義）の保護 ----
+    // ExcelJSは「列だけ」の印刷範囲（例：$B:$AI）を $BNaN:$AINaN のように壊して書き出し、複数範囲も1つに減らす。
+    // 壊れた名前定義があるとExcelが修復を求め、このツールでの再読み込みも「reading 'match'」で止まる。
+
+    // 読み込み前：壊れた名前定義（NaNを含むもの）を取り除く。過去に作った修正版も読み込めるようにする
+    async function sanitizeBook(buf) {
+      try {
+        const z = await JSZip.loadAsync(buf);
+        const f = z.file("xl/workbook.xml");
+        if (!f) return buf;
+        const x = await f.async("string");
+        const y = x.replace(/<definedName\b[^>]*>[^<]*NaN[^<]*<\/definedName>/g, "");
+        if (y === x) return buf;
+        z.file("xl/workbook.xml", y);
+        return await z.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+      } catch (e) {
+        return buf;
+      }
+    }
+
+    // 書き出し後：元ファイルの印刷範囲・印刷タイトルをそのまま戻す
+    async function restorePrintAreas(origBuf, outBuf) {
+      const oz = await JSZip.loadAsync(origBuf);
+      const nz = await JSZip.loadAsync(outBuf);
+      const readWb = async (z) => new DOMParser().parseFromString(await z.file("xl/workbook.xml").async("string"), "application/xml");
+      const sheetNames = (d) => Array.from(d.getElementsByTagNameNS("*", "sheet")).map((s) => s.getAttribute("name"));
+      const od = await readWb(oz), nd = await readWb(nz);
+      const oNames = sheetNames(od), nNames = sheetNames(nd);
+      const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escXml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+      const want = [];
+      for (const e of Array.from(od.getElementsByTagNameNS("*", "definedName"))) {
+        const nm = e.getAttribute("name") || "";
+        if (!/^_xlnm\.(Print_Area|Print_Titles)$/.test(nm)) continue;
+        const ls = e.getAttribute("localSheetId");
+        if (ls === null) continue;
+        const idx = nNames.indexOf(oNames[Number(ls)]);      // 修正版での同じ名前のシートの位置
+        const text = (e.textContent || "").trim();
+        if (idx < 0 || !text || /NaN|#REF/.test(text)) continue;
+        want.push({ nm, idx, text });
+      }
+      if (!want.length) return outBuf;
+
+      let x = await nz.file("xl/workbook.xml").async("string");
+      for (const w of want) {
+        // ExcelJSが書いた同じ名前の定義を取り除く（属性の順序はどちらでも対応）
+        x = x.replace(new RegExp(`<definedName\\b[^>]*name="${escRe(w.nm)}"[^>]*localSheetId="${w.idx}"[^>]*>[^<]*</definedName>`, "g"), () => "")
+             .replace(new RegExp(`<definedName\\b[^>]*localSheetId="${w.idx}"[^>]*name="${escRe(w.nm)}"[^>]*>[^<]*</definedName>`, "g"), () => "");
+      }
+      const add = want.map((w) => `<definedName name="${w.nm}" localSheetId="${w.idx}">${escXml(w.text)}</definedName>`).join("");
+      if (/<definedNames>/.test(x)) x = x.replace("<definedNames>", () => "<definedNames>" + add);
+      else if (/<definedNames\s*\/>/.test(x)) x = x.replace(/<definedNames\s*\/>/, () => `<definedNames>${add}</definedNames>`);
+      else x = x.replace("</sheets>", () => "</sheets><definedNames>" + add + "</definedNames>");
+      nz.file("xl/workbook.xml", x);
+      return await nz.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+    }
+
+    // ---- 引き継ぐ○図形の大きさ（cm）。変えたいときはここを書き換える ----
+    const CIRCLE_W_CM = 1.3;   // 幅
+    const CIRCLE_H_CM = 0.7;   // 高さ
+
+    // 描画XMLの中の○（楕円など）を指定の大きさにそろえる。位置は元の図形の中心を保つ
+    function resizeCircles(drXml) {
+      const EMU = 360000;                            // 1cm = 360000 EMU
+      const cx = Math.round(CIRCLE_W_CM * EMU), cy = Math.round(CIRCLE_H_CM * EMU);
+      const doc = new DOMParser().parseFromString(drXml, "application/xml");
+      const root = doc.documentElement;
+      const kids = (el, tag) => Array.from(el.children).filter((x) => x.localName === tag);
+      const isCircle = (sp) => {
+        const g = sp.getElementsByTagNameNS("*", "prstGeom")[0];
+        return !!g && /ellipse|donut|roundRect|circle/i.test(g.getAttribute("prst") || "");
+      };
+      for (const anchor of Array.from(root.children)) {
+        const kind = anchor.localName;
+        if (!/^(twoCellAnchor|oneCellAnchor|absoluteAnchor)$/.test(kind)) continue;
+        const sps = Array.from(anchor.getElementsByTagNameNS("*", "sp"));
+        if (sps.length !== 1 || !isCircle(sps[0])) continue;      // ○ひとつだけの枠が対象（画像・グループは触らない）
+        const sp = sps[0];
+        // 図形本体の大きさ（spPr直下の xfrm の ext）だけを対象にする。
+        // cNvPr の extLst 内の <a:ext uri="…"> に cx/cy を書くとExcelが図形を壊れたものとして削除する
+        const xfrm = Array.from(sp.getElementsByTagNameNS("*", "xfrm")).find((x) => x.parentNode && x.parentNode.localName === "spPr");
+        const xfrmExt = xfrm ? Array.from(xfrm.children).find((k) => k.localName === "ext") : null;
+        const oldCx = xfrmExt && Number(xfrmExt.getAttribute("cx")) > 0 ? Number(xfrmExt.getAttribute("cx")) : cx;
+        const oldCy = xfrmExt && Number(xfrmExt.getAttribute("cy")) > 0 ? Number(xfrmExt.getAttribute("cy")) : cy;
+        if (xfrmExt) { xfrmExt.setAttribute("cx", cx); xfrmExt.setAttribute("cy", cy); }
+
+        const NS = anchor.namespaceURI, pre = anchor.prefix ? anchor.prefix + ":" : "";
+        if (kind === "absoluteAnchor") {
+          const ext = kids(anchor, "ext")[0];
+          if (ext) { ext.setAttribute("cx", cx); ext.setAttribute("cy", cy); }
+          continue;
+        }
+        const from = kids(anchor, "from")[0];
+        if (!from) continue;
+        const shift = (tag, delta) => {
+          const el = kids(from, tag)[0];
+          if (el) el.textContent = String(Math.max(0, Math.round(Number(el.textContent) + delta)));
+        };
+        shift("colOff", (oldCx - cx) / 2);
+        shift("rowOff", (oldCy - cy) / 2);
+
+        if (kind === "twoCellAnchor") {
+          // 大きさを固定できる oneCellAnchor に置き換える（左上のセルと中心の位置は保つ）
+          const one = doc.createElementNS(NS, pre + "oneCellAnchor");
+          one.appendChild(from);
+          const ext = doc.createElementNS(NS, pre + "ext");
+          ext.setAttribute("cx", cx); ext.setAttribute("cy", cy);
+          one.appendChild(ext);
+          for (const k of Array.from(anchor.children)) if (k.localName !== "from" && k.localName !== "to") one.appendChild(k);
+          root.replaceChild(one, anchor);
+        } else {
+          const ext = kids(anchor, "ext")[0];
+          if (ext) { ext.setAttribute("cx", cx); ext.setAttribute("cy", cy); }
+        }
+      }
+      // ブラウザによっては元のXML宣言を出力に含めるため、取り除いてから1つだけ付ける（二重にするとExcelが図形を削除する）
+      const body = new XMLSerializer().serializeToString(doc).replace(/^\s*<\?xml[^>]*\?>\s*/, "");
+      return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + body;
+    }
+
     // ---- 修正版へ元の図形（○など）を戻す ----
     // ExcelJSは保存時に図形（楕円など）を落としてしまうため、元ファイルの描画データ（drawing）を修正版へ書き戻す
     async function restoreDrawings(origBuf, outBuf) {
@@ -2876,7 +3096,14 @@
           }
         }
         relsXml += "</Relationships>";
-        nz.file(nDrPath, drXml);
+        // ○の大きさをそろえる。結果がXMLとして読めないときは、元の描画データをそのまま使う
+        let drOut = drXml;
+        try {
+          const r = resizeCircles(drXml);
+          const chk = new DOMParser().parseFromString(r, "application/xml");
+          if (!chk.getElementsByTagName("parsererror").length && (r.match(/<\?xml/g) || []).length === 1) drOut = r;
+        } catch (e) { /* 元の描画データを使う */ }
+        nz.file(nDrPath, drOut);
         nz.file(relsPathOf(nDrPath), relsXml);
 
         if (isNew) {
@@ -3048,12 +3275,21 @@
         OUT_REP.forEach((r) => log.addRow([r[0], r[1], r[2], r[3], r[5] || ""]));
 
         // 3) 保存
+        // 列だけの印刷範囲はExcelJSが NaN に壊すので、書き出す前に外す（書き出し後に元の定義を戻す）
+        for (const w of OUT_WB.worksheets)
+          if (w.pageSetup && /NaN/.test(String(w.pageSetup.printArea || ""))) w.pageSetup.printArea = undefined;
         let buf = await OUT_WB.xlsx.writeBuffer();
         // ExcelJSが落とす図形（○など）を、元ファイルから修正版へ戻す
         try {
           if (ORIG_BUF) buf = await restoreDrawings(ORIG_BUF, buf);
         } catch (e) {
           warns.push("図形（○など）を修正版へ引き継げませんでした：" + e.message);
+        }
+        // 印刷範囲・印刷タイトルを元ファイルのまま戻す
+        try {
+          if (ORIG_BUF) buf = await restorePrintAreas(ORIG_BUF, buf);
+        } catch (e) {
+          warns.push("印刷範囲を元どおりに戻せませんでした：" + e.message);
         }
         download(OUT_NAME, new Blob([buf], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
