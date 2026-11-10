@@ -2524,9 +2524,9 @@
     let SHOWN_TY = null;
 
     function sortBy(col) {
-      // 同じ列を続けて押すと 昇順 → 降順 → 元の順
-      if (SORT.col !== col) SORT = { col, dir: 1 };
-      else if (SORT.dir === 1) SORT = { col, dir: -1 };
+      // 同じ列を続けて押すと 降順 → 昇順 → 元の順
+      if (SORT.col !== col) SORT = { col, dir: -1 };
+      else if (SORT.dir === -1) SORT = { col, dir: 1 };
       else SORT = { col: -1, dir: 0 };
       renderRows();
     }
