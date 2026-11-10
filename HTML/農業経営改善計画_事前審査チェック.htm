@@ -41,6 +41,9 @@
     table.consistency-grid th:nth-child(3), table.consistency-grid td:nth-child(3) { width: 52%; }
     table.consistency-grid.cols2 th:nth-child(1), table.consistency-grid.cols2 td:nth-child(1) { width: 30%; }
     table.consistency-grid.cols2 th:nth-child(2), table.consistency-grid.cols2 td:nth-child(2) { width: 70%; }
+    table.price-grid th:nth-child(1), table.price-grid td:nth-child(1) { width: 52%; }
+    table.price-grid th:nth-child(2), table.price-grid td:nth-child(2) { width: 30%; }
+    table.price-grid th:nth-child(3), table.price-grid td:nth-child(3) { width: 18%; padding: 0 4px; font-size: .75rem; color: #555; white-space: nowrap; }
     .grid-info { font-size: .78rem; margin: 2px 0; }
     .grid-hint { font-size: .72rem; color: #666; }
     table.result-table td { overflow-wrap: anywhere; }
@@ -2020,7 +2023,8 @@
         }
       },
 
-      // 単価：作目；単価を列挙し、修正欄には（参考資料あり）と記す
+      // 単価：Excelの「作目」と「単価」の表を読み取り、修正（手入力）欄に作目・単価の表として出す
+      // 手で直した作目名・単価は、修正版のダウンロードで赤字にして反映する（現在・目標とも）
       priceList(rule, ctx) {
         for (const ws of sheetsFor(ctx, rule)) {
           const cr = readCropCols(ws);
@@ -2029,14 +2033,22 @@
           // 単位：耕種は円/kg、畜産は円/頭（乳牛は円/L）
           const live = sec2LiveNames(ctx);
           const unitOf = (n) => (live.some((t) => t.includes(n) || n.includes(t)) ? (/乳/.test(n) ? "円/L" : "円/頭") : "円/kg");
-          const lines = cr.names.map((o) => {
+          const rows = cr.names.map((o) => {
             const v = getVal(ws.getCell(pRow.r, o.c));
-            return `${o.n}；${v === null ? "" : v + unitOf(o.n)}`;
+            return {
+              nameR: cr.rowHdr.r, nameC: o.c, priceR: pRow.r, priceC: o.c,
+              name: String(getVal(ws.getCell(cr.rowHdr.r, o.c)) ?? "").replace(/\s*\n\s*/g, " ").trim(),
+              price: v === null ? "" : String(v).replace(/\s*\n\s*/g, " ").trim(),
+              numeric: v === null || typeof v === "number",
+              unit: unitOf(o.n)
+            };
           });
-          // 内容欄には「（参考資料あり）」は含めない（修正欄に表示する）
+          if (!rows.length) { fallback(ctx, rule, `${ws.name}の作目が見つかりません`); continue; }
           const title = rule.text.replace(/[（(]参考資料あり[）)]/, "").trim();
-          ctx.rep.push([ws.name, ws.getCell(1, 1).address, "手動確認",
-            title + (lines.length ? "\n" + lines.join("\n") : ""), null, "（参考資料あり）"]);
+          const lines = rows.map((x) => `${x.name}；${x.price === "" ? "" : x.price + x.unit}`);
+          const grid = { kind: "priceGrid", ws: ws.name, rows, header: ["作目", "単価", "単位"] };
+          ctx.rep.push([ws.name, ws.getCell(pRow.r, pRow.c).address, "手動確認",
+            title + "\n" + lines.join("\n"), grid, rows.map((x) => `${x.name}\t${x.price}`).join("\n")]);
         }
       },
 
@@ -2514,6 +2526,60 @@
       return wrap;
     }
 
+    // 作目・単価の表（「単価が妥当である」）。値は r[5] に「作目<TAB>単価」の行として保持する
+    function buildPriceGrid(r) {
+      const t = r[4];
+      const wrap = document.createElement("div");
+      const data = (r[5] || "").split("\n").map((l) => l.split("\t"));
+      const table = document.createElement("table");
+      table.className = "grid price-grid";
+      const head = document.createElement("tr");
+      t.header.forEach((h) => { const th = document.createElement("th"); th.textContent = h; head.appendChild(th); });
+      table.appendChild(head);
+      const inputs = [];
+      const sync = () => { r[5] = inputs.map((row) => row.map((i) => i.value).join("\t")).join("\n"); };
+      t.rows.forEach((row, i) => {
+        const tr = document.createElement("tr");
+        inputs[i] = [];
+        for (let j = 0; j < 2; j++) {
+          const td = document.createElement("td");
+          const inp = document.createElement("input");
+          inp.type = "text";
+          inp.value = (data[i] && data[i][j]) || "";
+          if (j === 1) inp.style.textAlign = "right";
+          inp.addEventListener("input", sync);
+          // Excelからのコピー（タブ・改行区切り）を、このセルを先頭に貼り付ける。
+          // Excelの横並び（作目の行＋単価の行）をコピーしたときは、縦に並べ替えて貼り付ける
+          inp.addEventListener("paste", (ev) => {
+            const text = (ev.clipboardData || window.clipboardData).getData("text");
+            if (!/[\t\n]/.test(text)) return;
+            ev.preventDefault();
+            let lines = text.replace(/\r/g, "").replace(/\n+$/, "").split("\n").map((l) => l.split("\t"));
+            if (lines.length === 2 && lines[0].length > 2)
+              lines = lines[0].map((_, k) => [lines[0][k], lines[1][k] ?? ""]);
+            lines.forEach((cols, a) => cols.forEach((v, b) => {
+              if (inputs[i + a] && inputs[i + a][j + b]) inputs[i + a][j + b].value = v.trim();
+            }));
+            sync();
+          });
+          inputs[i][j] = inp;
+          td.appendChild(inp);
+          tr.appendChild(td);
+        }
+        const tu = document.createElement("td");
+        tu.textContent = row.unit;
+        tr.appendChild(tu);
+        table.appendChild(tr);
+      });
+      const hint = document.createElement("div");
+      hint.className = "grid-hint";
+      hint.textContent = "Excelから読み取った作目・単価です。直すと修正版Excelに反映します（変更したセルは赤字）。Excelの範囲を貼り付けることもできます。";
+      wrap.appendChild(table);
+      wrap.appendChild(hint);
+      sync();
+      return wrap;
+    }
+
     // ③の「項目；現状；目標・措置」表。Excel範囲を貼り付け、各セルを個別に編集できる
     const rowOf = (block, j) => (block.rows ? block.rows[j] : block.r);   // 列ごとの行（結合セル対応）。無ければ行は共通
     function buildConsistencyGrid(r) {
@@ -2668,6 +2734,8 @@
           }
           if (r[4] && r[4].kind === "grid") {
             wrap.appendChild(buildGrid(r));                    // 作目・面積の表
+          } else if (r[4] && r[4].kind === "priceGrid") {
+            wrap.appendChild(buildPriceGrid(r));               // 作目・単価の表
           } else if (r[4] && r[4].kind === "consistency") {
             wrap.appendChild(buildConsistencyGrid(r));          // ③の項目・現状・目標・措置の表
           } else {
@@ -2730,6 +2798,31 @@
               }
             });
             if (changed) OUT_WB.calcProperties = { ...(OUT_WB.calcProperties || {}), fullCalcOnLoad: true };   // 合計などの数式を開いたときに再計算
+            continue;
+          }
+
+          // 作目・単価の表（現在・目標シート）：変更した作目名・単価だけを書き換え、赤字にする
+          if (t.kind === "priceGrid") {
+            const wsP = OUT_WB.getWorksheet(t.ws);
+            if (!wsP) continue;
+            const lines = val.split("\n").map((l) => l.split("\t"));
+            const red = { color: { argb: "FFFF0000" } };
+            t.rows.forEach((row, i) => {
+              const parts = lines[i] || [];
+              const nm = (parts[0] ?? "").trim();
+              const pr = (parts[1] ?? "").trim();
+              if (nm !== row.name) {
+                const c = wsP.getCell(row.nameR, row.nameC);
+                c.value = nm === "" ? null : nm;
+                setFont(c, { ...(c.font || {}), ...red });
+              }
+              if (pr !== row.price) {
+                const n = Number(pr.replace(/\s*円.*$/, "").replace(/,/g, ""));
+                const c = wsP.getCell(row.priceR, row.priceC);
+                c.value = pr === "" ? null : (row.numeric && !isNaN(n) ? n : pr);
+                setFont(c, { ...(c.font || {}), ...red });
+              }
+            });
             continue;
           }
 
@@ -2818,7 +2911,7 @@
         dl.textContent = "エラー: " + e.message;
       }
     }
-
+    
     // ================= イベント =================
     $("clFile").addEventListener("change", async () => {
       const f = $("clFile").files[0];
